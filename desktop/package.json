@@ -1,0 +1,30 @@
+{
+  "name": "dbd-tracker-overlay",
+  "version": "1.0.0",
+  "description": "DBD Stats Overlay",
+  "author": "local",
+  "private": true,
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test *.test.js",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "36.3.1",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "local.dbdtracker.overlay",
+    "productName": "DBD Tracker Overlay",
+    "artifactName": "DBD-Tracker-Overlay-${version}.${ext}",
+    "forceCodeSigning": false,
+    "files": ["main.js", "preload.cjs", "database.js", "server.js", "background-collector.js", "overlay.html", "tray_icons"],
+    "win": {
+      "target": "portable",
+      "icon": "tray_icons/Icon.png"
+    }
+  }
+}
+
