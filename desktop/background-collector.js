@@ -123,8 +123,6 @@ const officialParticipant = player => ({
 
 function normalizeOfficialMatch(source) {
   if (!source?.matchStat || !source?.playerStat || !Array.isArray(source?.opponentStat)) return;
-  // Ignora partidas de MapShowcase (não são partidas normais)
-  if (source.matchStat?.gameType?.id === "MapShowcase") return;
   const player = source.playerStat;
   const playerRole = role(player.playerRole);
   if (!playerRole) return;
@@ -259,26 +257,82 @@ const metricsScript = `(() => {
 const characterDetailScript = `(() => {
   const clean = value => (value || "").replace(/\\s+/g, " ").trim();
   const lines = document.body.innerText.split(/\\n+/).map(clean).filter(Boolean);
-  const labels = [
-    "Hours played","Pick Rate","Escape Rate","Kill Rate","Matches played","Total escapes",
-    "Total Bloodpoints earned","Average Bloodpoints earned","Total survivors healed",
-    "Total times hooked","Average times hooked","Total chases won","Longest chase time",
-    "Total kills","Total hooks","Average hooks","Total hits","Total gens kicked",
-    "Total pallets destroyed","Total walls broken","Total vaults broken"
-  ];
+  const labelMappings = {
+    "Hours played": ["hours played", "horas jogadas", "horas de jogo"],
+    "Pick Rate": ["pick rate", "taxa de escolha"],
+    "Escape Rate": ["escape rate", "taxa de fuga"],
+    "Kill Rate": ["kill rate", "taxa de eliminação", "taxa de matança", "taxa de abate"],
+    "Matches played": ["matches played", "partidas jogadas"],
+    "Total escapes": ["total escapes", "total de fugas"],
+    "Total Bloodpoints earned": ["total bloodpoints earned", "total de pontos de sangue ganhos", "total de pontos de sangue recebidos"],
+    "Average Bloodpoints earned": ["average bloodpoints earned", "média de pontos de sangue ganhos"],
+    "Total survivors healed": ["total survivors healed", "total de sobreviventes curados"],
+    "Total times hooked": ["total times hooked", "total de ganchos sofridos", "total de vezes no gancho"],
+    "Average times hooked": ["average times hooked", "média de ganchos sofridos"],
+    "Total chases won": ["total chases won", "total de perseguições vencidas"],
+    "Longest chase time": ["longest chase time", "maior tempo de perseguição"],
+    "Total kills": ["total kills", "total de eliminações", "total de abates"],
+    "Total hooks": ["total hooks", "total de ganchos"],
+    "Average hooks": ["average hooks", "média de ganchos"],
+    "Total hits": ["total hits", "total de acertos", "total de golpes"],
+    "Total gens kicked": ["total gens kicked", "total de geradores chutados"],
+    "Total pallets destroyed": ["total pallets destroyed", "total de barricadas destruídas", "total de pallets destruídos"],
+    "Total walls broken": ["total walls broken", "total de paredes quebradas"],
+    "Total vaults broken": ["total vaults broken", "total de janelas puladas"]
+  };
   const values = {};
-  for (const label of labels) {
-    const index = lines.findIndex(line => line.toLowerCase() === label.toLowerCase());
-    if (index >= 0 && lines[index + 1]) values[label] = lines[index + 1];
+  for (const [key, searchTerms] of Object.entries(labelMappings)) {
+    const index = lines.findIndex(line => searchTerms.includes(line.toLowerCase()));
+    if (index >= 0 && lines[index + 1]) values[key] = lines[index + 1];
   }
-  const badge = lines.findIndex(line => /top survivor|top killer/i.test(line));
-  const activeRole = badge >= 0 && /survivor/i.test(lines[badge]) ? "survivor" : "killer";
-  const heading = lines.map(line => line.toLowerCase()).lastIndexOf(activeRole, badge >= 0 ? badge : lines.length);
-  const character = heading >= 0 ? lines.slice(heading + 1).find(line =>
-    !/top survivor|top killer|hours played|pick rate|escape rate|kill rate/i.test(line) &&
+  const badge = lines.findIndex(line => /top survivor|top killer|melhor sobrevivente|melhor assassino/i.test(line));
+  const activeRole = badge >= 0 && /survivor|sobrevivente/i.test(lines[badge]) ? "survivor" : "killer";
+  const heading = lines.map(line => line.toLowerCase()).lastIndexOf(
+    activeRole === "survivor" ? "survivor" : "killer",
+    badge >= 0 ? badge : lines.length
+  );
+  let headingIndex = heading;
+  if (headingIndex < 0) {
+    headingIndex = lines.map(line => line.toLowerCase()).lastIndexOf(
+      activeRole === "survivor" ? "sobrevivente" : "assassino",
+      badge >= 0 ? badge : lines.length
+    );
+  }
+  const character = headingIndex >= 0 ? lines.slice(headingIndex + 1).find(line =>
+    !/top survivor|top killer|melhor sobrevivente|melhor assassino|hours played|horas jogadas|horas de jogo|pick rate|taxa de escolha|escape rate|taxa de fuga|kill rate|taxa de abate|taxa de eliminação/i.test(line) &&
     !/\\d/.test(line) && line.length < 60
   ) : undefined;
-  return { character, values, text: clean(document.body.innerText).slice(0,100000) };
+  
+  const folder = activeRole === "survivor" ? "/characters/survivors/" : "/characters/killers/";
+  let imgEl = [...document.querySelectorAll("img")].find(img => {
+    if (!img.src) return false;
+    const decodedSrc = decodeURIComponent(img.src).toLowerCase();
+    return decodedSrc.includes(folder);
+  });
+  if (!imgEl) {
+    imgEl = [...document.querySelectorAll("img")].find(img => {
+      if (!img.src) return false;
+      const decodedSrc = decodeURIComponent(img.src).toLowerCase();
+      return decodedSrc.includes("/characters/");
+    });
+  }
+  
+  let image = undefined;
+  if (imgEl && imgEl.src) {
+    const rawSrc = imgEl.src;
+    if (rawSrc.includes("?url=") || rawSrc.includes("&url=")) {
+      try {
+        const urlParams = new URL(rawSrc).searchParams;
+        image = urlParams.get("url") || rawSrc;
+      } catch (e) {
+        image = decodeURIComponent(rawSrc);
+      }
+    } else {
+      image = rawSrc;
+    }
+  }
+
+  return { character, values, image, text: clean(document.body.innerText).slice(0,100000) };
 })()`;
 
 export function createBackgroundCollector(db, onStatus) {
@@ -454,15 +508,37 @@ export function createBackgroundCollector(db, onStatus) {
       })()`);
       await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-regular-trials-dom", captured_at: new Date().toISOString(), raw: regularTrials }]);
       for (const roleName of ["Survivor", "Killer"]) {
-        const detail = await statistics.webContents.executeJavaScript(`(async () => {
-          const target = [...document.querySelectorAll("button,a,[role=tab]")].find(node => (node.textContent || "").trim().toLowerCase() === ${JSON.stringify(roleName.toLowerCase())});
-          if (target) { target.click(); await new Promise(resolve => setTimeout(resolve, 1600)); }
-          return (${characterDetailScript});
-        })()`);
-        if (detail.character) {
+        // Clica na aba correspondente (suporta Inglês e Português)
+        await statistics.webContents.executeJavaScript(`(() => {
+          const target = [...document.querySelectorAll("button,a,[role=tab]")]
+            .find(node => {
+              const text = (node.textContent || "").trim().toLowerCase();
+              return ${roleName === "Survivor"} 
+                ? ["survivor", "sobrevivente"].includes(text)
+                : ["killer", "assassino"].includes(text);
+            });
+          if (target) {
+            target.click();
+            return true;
+          }
+          return false;
+        })()`).catch(err => console.warn(`[Collector] Erro ao clicar na aba ${roleName}:`, err.message));
+
+        // Aguarda a renderização ou transição da página
+        await new Promise(resolve => setTimeout(resolve, 2500));
+
+        // Extrai os dados em um passo separado para evitar erros de navegação abortada
+        const detail = await statistics.webContents.executeJavaScript(characterDetailScript)
+          .catch(err => {
+            console.error(`[Collector] Erro na execução de characterDetailScript para ${roleName}:`, err.message);
+            return { character: null, values: {} };
+          });
+
+        if (detail && detail.character) {
+          const topValues = detail.image ? { ...detail.values, image: detail.image } : detail.values;
           await ingestTopCharacter(db, {
             section: "regular-trials", period: "all-time", role: roleName.toLowerCase(),
-            character: detail.character, captured_at: new Date().toISOString(), values: detail.values
+            character: detail.character, captured_at: new Date().toISOString(), values: topValues
           });
         }
         await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: `statistics-regular-trials-${roleName.toLowerCase()}-dom`, captured_at: new Date().toISOString(), raw: detail }]);

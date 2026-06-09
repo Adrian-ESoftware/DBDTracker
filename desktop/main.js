@@ -186,11 +186,11 @@ ipcMain.handle("toggle-clicks", () => {
   window.setIgnoreMouseEvents(clickThrough, { forward: true });
   return clickThrough;
 });
-ipcMain.handle("show-login", () => collector.showLogin());
-ipcMain.handle("finish-login", () => collector.finishLogin());
-ipcMain.handle("collect-now", () => collector.collect());
-ipcMain.handle("clear-login", () => collector.clearLogin());
-ipcMain.handle("collector-status", () => collector.getState());
+ipcMain.handle("show-login", () => collector?.showLogin());
+ipcMain.handle("finish-login", () => collector?.finishLogin());
+ipcMain.handle("collect-now", () => collector?.collect());
+ipcMain.handle("clear-login", () => collector?.clearLogin());
+ipcMain.handle("collector-status", () => collector ? collector.getState() : { message: "Iniciando coletor...", loggedIn: false, collecting: false });
 ipcMain.handle("toggle-size", () => {
   compact = !compact;
   window.setSize(compact ? 480 : 1180, compact ? 620 : 760, true);

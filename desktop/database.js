@@ -735,8 +735,9 @@ export async function topCharacters(db) {
     return db.db.prepare("SELECT section,period,role,character,captured_at,raw_json FROM top_character_stats WHERE user_email = ? ORDER BY role").all(userEmail)
       .map(row => {
         const values = parse(row.raw_json);
+        const img = values.image || images.characters.get(row.character);
         delete values.image;
-        return { ...row, image: images.characters.get(row.character), values, raw_json: undefined };
+        return { ...row, image: img, values, raw_json: undefined };
       });
   } else {
     const { data } = check(await db.client
@@ -746,10 +747,11 @@ export async function topCharacters(db) {
       .order("role", { ascending: true }));
     return (data || []).map(row => {
       const values = parse(row.raw_json);
+      const img = values.image || images.characters.get(row.character);
       delete values.image;
       return {
         ...row,
-        image: images.characters.get(row.character),
+        image: img,
         values,
         raw_json: undefined
       };
@@ -1014,13 +1016,13 @@ export async function maps(db, global = false) {
   if (db.type === "sqlite") {
     const query = userEmail
       ? `
-      SELECT m.map, m.role, m.result, m.map_realm, k.kills_count, m.id
+      SELECT m.map, m.role, m.result, m.map_realm, k.kills_count, m.id, m.raw_json
       FROM matches m
       LEFT JOIN killer_info k ON m.id = k.match_id
       WHERE m.map IS NOT NULL AND m.user_email = ?
     `
       : `
-      SELECT m.map, m.role, m.result, m.map_realm, k.kills_count, m.id
+      SELECT m.map, m.role, m.result, m.map_realm, k.kills_count, m.id, m.raw_json
       FROM matches m
       LEFT JOIN killer_info k ON m.id = k.match_id
       WHERE m.map IS NOT NULL
@@ -1029,7 +1031,7 @@ export async function maps(db, global = false) {
   } else {
     let query = db.client
       .from("matches")
-      .select("map, role, result, map_realm, id, killer_info(kills_count)")
+      .select("map, role, result, map_realm, id, raw_json, killer_info(kills_count)")
       .not("map", "is", null);
     if (userEmail) {
       query = query.eq("user_email", userEmail);
@@ -1041,6 +1043,7 @@ export async function maps(db, global = false) {
       result: row.result,
       map_realm: row.map_realm,
       id: row.id,
+      raw_json: row.raw_json,
       kills_count: row.killer_info?.[0]?.kills_count ?? null
     }));
   }
@@ -1069,6 +1072,10 @@ export async function maps(db, global = false) {
 
   const groups = new Map();
   for (const row of rows) {
+    const raw = parse(row.raw_json);
+    if (raw?.matchStat?.gameType?.id === "MapShowcase") {
+      continue;
+    }
     const name = row.map;
     if (!groups.has(name)) {
       groups.set(name, { count: 0, wins: 0, realm: row.map_realm });
@@ -1093,7 +1100,10 @@ export async function maps(db, global = false) {
     }
   }
 
-  const total = rows.length;
+  let total = 0;
+  for (const g of groups.values()) {
+    total += g.count;
+  }
 
   return [...groups].map(([name, stats]) => {
     const pct = percentage(stats.count, total);
