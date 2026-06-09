@@ -1,10 +1,10 @@
 # DBD Tracker Overlay
 
-Overlay desktop local inspirado no Valorant Tracker. Ele fica sobre o Dead by Daylight, abre com `Ctrl+Shift+D` e salva os dados em SQLite.
+Overlay desktop local inspirado no Valorant Tracker. Ele fica sobre o Dead by Daylight, abre com `Ctrl+Shift+F` e salva os dados em SQLite.
 
 ## Coleta autonoma
 
-O app possui um navegador interno persistente que fica oculto durante o uso normal:
+O app em `desktop-tauri/` foi recriado a partir do boilerplate oficial `npm create tauri-app@latest` com Tauri v2 e possui uma janela interna persistente que fica oculta durante o uso normal:
 
 1. Clique em **Fazer login** apenas na primeira vez.
 2. Entre na sua conta na janela oficial `stats.deadbydaylight.com`.
@@ -12,7 +12,7 @@ O app possui um navegador interno persistente que fica oculto durante o uso norm
 
 Depois disso, a janela fica oculta e, enquanto o overlay estiver rodando, o app verifica `Statistics` e `Recent Match History` a cada 60 segundos. Quando o site oficial publicar uma partida nova, ela e salva automaticamente no SQLite.
 
-A sessao fica armazenada localmente no perfil `persist:dbd-official` do Electron. O projeto nao envia credenciais nem dados para servidores externos alem do proprio site oficial.
+A sessao fica armazenada localmente pelo WebView do sistema usado pelo Tauri. O projeto nao envia credenciais nem dados para servidores externos alem do proprio site oficial.
 
 ## Dados monitorados
 
@@ -29,19 +29,19 @@ As partidas sao identificadas por uma chave estavel e importadas com `UPSERT`: p
 
 ## Rodar
 
-Requer Node.js 22 ou mais recente.
+Requer Node.js 22 ou mais recente, Rust e as dependencias de sistema do Tauri v2.
 
 ```bash
-cd desktop
+cd desktop-tauri
 npm install
-npm start
+npm run dev
 ```
 
-O SQLite `dbd_tracker.sqlite3` fica na pasta de dados do aplicativo Electron.
+O SQLite `dbd_tracker.sqlite3` fica na pasta de dados do aplicativo Tauri.
 
 ## Atalhos
 
-- `Ctrl+Shift+D`: mostrar, ocultar ou recuperar o controle do mouse.
+- `Ctrl+Shift+F`: mostrar, ocultar ou recuperar o controle do mouse.
 - `Ctrl+Shift+X`: ativar/desativar o modo que ignora cliques.
 
 Use o modo **janela sem bordas** do Dead by Daylight para o overlay permanecer visivel.
@@ -49,8 +49,8 @@ Use o modo **janela sem bordas** do Dead by Daylight para o overlay permanecer v
 ## Gerar executavel
 
 ```bash
-cd desktop
-npm run dist
+cd desktop-tauri
+npm run build
 ```
 
-O executavel portatil sera criado em `desktop/dist/`.
+O instalador sera criado pelos targets do Tauri em `desktop-tauri/src-tauri/target/release/bundle/`.
