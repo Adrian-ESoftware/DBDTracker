@@ -2,11 +2,27 @@
   const API = "http://127.0.0.1:8765/api";
   const capturedAt = new Date().toISOString();
   const clean = value => (value || "").replace(/\s+/g, " ").trim();
-  const post = (path, body) => fetch(API + path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body)
-  }).catch(() => {});
+  const invokeRoutes = {
+    "/matches/bulk": ["ingest_collector_matches", "matches"],
+    "/snapshots/bulk": ["ingest_collector_snapshots", "snapshots"],
+    "/official-metrics": ["ingest_collector_official_metrics", "payload"],
+    "/official-sections": ["ingest_collector_official_sections", "payload"],
+    "/top-characters": ["ingest_collector_top_character", "payload"],
+    "/collector/status": ["set_collector_status", "status"]
+  };
+  const post = async (path, body) => {
+    const route = invokeRoutes[path];
+    if (route && window.__TAURI__ && window.__TAURI__.core) {
+      try {
+        return await window.__TAURI__.core.invoke(route[0], { [route[1]]: body });
+      } catch {}
+    }
+    return fetch(API + path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    }).catch(() => {});
+  };
 
   const textBody = clean(document.body && document.body.innerText);
   const loggedIn = !/sign in|join now|log in|entrar|conectar/i.test(textBody);
@@ -187,6 +203,63 @@
     }
   }
 
+  function parseVisibleDate(value) {
+    const cleaned = clean(value);
+    if (!cleaned) return;
+    const withYear = /\b\d{4}\b/.test(cleaned) ? cleaned : `${cleaned}, ${new Date().getFullYear()}`;
+    const parsed = new Date(withYear);
+    if (Number.isNaN(parsed.valueOf())) return;
+    if (parsed.getTime() > Date.now() + 86400000) parsed.setFullYear(parsed.getFullYear() - 1);
+    return parsed.toISOString();
+  }
+
+  function visibleHistoryMatches() {
+    if (!/match history/i.test(document.body.innerText || "")) return [];
+    const cards = [...document.querySelectorAll("li,article,section,div")]
+      .map(element => ({ element, lines: clean(element.innerText).split(/\n+/).map(clean).filter(Boolean) }))
+      .filter(item =>
+        item.lines.length >= 4 &&
+        item.lines.some(line => /score/i.test(line)) &&
+        item.lines.some(line => /dead|sacrificed|escaped|killed|mori/i.test(line)) &&
+        item.lines.some(line => /\b\d{1,3}(,\d{3})*\b/.test(line))
+      );
+    const seen = new Set();
+    const matches = [];
+    for (const { element, lines } of cards) {
+      const scoreIndex = lines.findIndex(line => /^score$/i.test(line));
+      const score = scoreIndex >= 0 ? number(lines[scoreIndex + 1]) : number(lines.find(line => /\b\d{1,3}(,\d{3})*\b/.test(line)));
+      const result = lines.find(line => /dead|sacrificed|escaped|killed|mori/i.test(line));
+      const dateLine = lines.find(line => /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(line) && /\d/.test(line));
+      const played_at = parseVisibleDate(dateLine);
+      const character = lines.find(line =>
+        line !== result &&
+        line !== dateLine &&
+        !/^score$/i.test(line) &&
+        !/^\d/.test(line) &&
+        !/recent match history|dead by daylight|statistics|news|faq/i.test(line) &&
+        line.length > 2 &&
+        line.length < 80
+      );
+      if (!played_at || !character || !score) continue;
+      const key = `${played_at}|${character}|${score}|${result}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const image = element.querySelector("img")?.src;
+      matches.push({
+        source_id: `dom-history|${key}`,
+        played_at,
+        role: "survivor",
+        character,
+        result,
+        score,
+        loadout: { perks: [], addons: [] },
+        participants: [],
+        raw: { source: "visible-dom-history", lines, image }
+      });
+    }
+    return matches;
+  }
+
   function metrics() {
     const metrics = [], seen = new Set(), lines = document.body.innerText.split(/\n+/).map(clean).filter(Boolean);
     const add = (label, value) => {
@@ -227,6 +300,16 @@
   }
 
   await scanResources();
+  const domMatches = visibleHistoryMatches();
+  if (domMatches.length) {
+    await post("/matches/bulk", domMatches);
+    await post("/snapshots/bulk", [{
+      source_url: location.href,
+      kind: "match-history-dom",
+      captured_at: capturedAt,
+      raw: { matches: domMatches }
+    }]);
+  }
 
   const currentMetrics = metrics();
   await post("/official-metrics", {

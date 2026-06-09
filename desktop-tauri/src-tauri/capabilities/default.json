@@ -2,7 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
   "description": "Permissoes do overlay principal",
-  "windows": ["main"],
+  "windows": ["main", "collector"],
+  "remote": {
+    "urls": ["https://stats.deadbydaylight.com/**"]
+  },
   "permissions": [
     "core:app:default",
     "core:event:default",

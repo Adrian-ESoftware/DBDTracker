@@ -695,6 +695,8 @@ dependencies = [
  "time",
  "tiny_http",
  "url",
+ "webview2-com",
+ "windows",
 ]
 
 [[package]]

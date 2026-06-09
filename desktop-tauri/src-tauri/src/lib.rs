@@ -1,3 +1,4 @@
+mod collector_parser;
 mod database;
 
 use database::{now_iso, Database};
@@ -112,6 +113,55 @@ fn collector_status(state: tauri::State<'_, Shared>) -> Result<CollectorStatus, 
         .map_err(to_string)
 }
 
+#[tauri::command]
+fn ingest_collector_matches(
+    state: tauri::State<'_, Shared>,
+    matches: Value,
+) -> Result<Value, String> {
+    state.db.ingest_matches(matches)
+}
+
+#[tauri::command]
+fn ingest_collector_snapshots(
+    state: tauri::State<'_, Shared>,
+    snapshots: Value,
+) -> Result<Value, String> {
+    state.db.ingest_snapshots(snapshots)
+}
+
+#[tauri::command]
+fn ingest_collector_official_metrics(
+    state: tauri::State<'_, Shared>,
+    payload: Value,
+) -> Result<Value, String> {
+    state.db.ingest_official_metrics(payload)
+}
+
+#[tauri::command]
+fn ingest_collector_official_sections(
+    state: tauri::State<'_, Shared>,
+    payload: Value,
+) -> Result<Value, String> {
+    state.db.ingest_official_sections(payload)
+}
+
+#[tauri::command]
+fn ingest_collector_top_character(
+    state: tauri::State<'_, Shared>,
+    payload: Value,
+) -> Result<Value, String> {
+    state.db.ingest_top_character(payload)
+}
+
+#[tauri::command]
+fn set_collector_status(
+    app: AppHandle,
+    state: tauri::State<'_, Shared>,
+    status: Value,
+) -> Result<Value, String> {
+    update_login_status(&app, &state, status)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -162,7 +212,13 @@ pub fn run() {
             show_login,
             finish_login,
             collect_now,
-            collector_status
+            collector_status,
+            ingest_collector_matches,
+            ingest_collector_snapshots,
+            ingest_collector_official_metrics,
+            ingest_collector_official_sections,
+            ingest_collector_top_character,
+            set_collector_status
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar DBD Tracker Overlay");
@@ -406,6 +462,11 @@ fn reply(request: tiny_http::Request, status: u16, body: Value, origin: Option<S
 
 fn allowed_origin(origin: &str) -> bool {
     origin.starts_with("https://stats.deadbydaylight.com")
+        || origin == "tauri://localhost"
+        || origin == "http://tauri.localhost"
+        || origin == "https://tauri.localhost"
+        || origin.starts_with("http://127.0.0.1:")
+        || origin.starts_with("http://localhost:")
 }
 
 fn update_login_status(app: &AppHandle, shared: &Shared, value: Value) -> Result<Value, String> {
@@ -432,7 +493,7 @@ fn ensure_collector(app: &AppHandle, visible: bool) -> Result<WebviewWindow, Str
     if let Some(window) = app.get_webview_window("collector") {
         return Ok(window);
     }
-    WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         app,
         "collector",
         WebviewUrl::External(Url::parse(STATISTICS_URL).map_err(to_string)?),
@@ -441,7 +502,9 @@ fn ensure_collector(app: &AppHandle, visible: bool) -> Result<WebviewWindow, Str
     .inner_size(1180.0, 820.0)
     .visible(visible)
     .build()
-    .map_err(to_string)
+    .map_err(to_string)?;
+    attach_network_collector(&window, app.clone())?;
+    Ok(window)
 }
 
 fn navigate(window: &WebviewWindow, url: &str) -> Result<(), String> {
@@ -504,4 +567,166 @@ where
 
 fn to_string(error: impl ToString) -> String {
     error.to_string()
+}
+
+#[cfg(windows)]
+fn attach_network_collector(window: &WebviewWindow, app: AppHandle) -> Result<(), String> {
+    use serde_json::Value;
+    use std::{collections::HashMap, sync::Mutex};
+    use webview2_com::{
+        CallDevToolsProtocolMethodCompletedHandler, DevToolsProtocolEventReceivedEventHandler,
+    };
+    use windows::core::HSTRING;
+
+    let shared = app.state::<Shared>().inner().clone();
+    let pending = Arc::new(Mutex::new(HashMap::<String, String>::new()));
+    window
+        .with_webview(move |platform| unsafe {
+            let Ok(core) = platform.controller().CoreWebView2() else {
+                return;
+            };
+            let noop = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_, _| Ok(())));
+            let network_enable = HSTRING::from("Network.enable");
+            let empty_params = HSTRING::from("{}");
+            let _ = core.CallDevToolsProtocolMethod(&network_enable, &empty_params, &noop);
+
+            let response_received = HSTRING::from("Network.responseReceived");
+            let Ok(receiver) = core.GetDevToolsProtocolEventReceiver(&response_received) else {
+                return;
+            };
+            let mut token = 0;
+            let pending_events = pending.clone();
+            let event_handler =
+                DevToolsProtocolEventReceivedEventHandler::create(Box::new(move |sender, args| {
+                    let Some(sender) = sender else {
+                        return Ok(());
+                    };
+                    let Some(args) = args else {
+                        return Ok(());
+                    };
+                    let mut event_json_ptr = windows::core::PWSTR::null();
+                    if args.ParameterObjectAsJson(&mut event_json_ptr).is_err()
+                        || event_json_ptr.is_null()
+                    {
+                        return Ok(());
+                    }
+                    let event_json = event_json_ptr.to_string().unwrap_or_default();
+                    let Ok(event): Result<Value, _> = serde_json::from_str(&event_json) else {
+                        return Ok(());
+                    };
+                    let request_id = event
+                        .get("requestId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    let response = event.get("response").unwrap_or(&Value::Null);
+                    let url = response
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    let mime_type = response
+                        .get("mimeType")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_ascii_lowercase();
+                    let resource_type = event
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_ascii_lowercase();
+                    let interesting = (resource_type == "xhr" || resource_type == "fetch")
+                        && (mime_type.contains("json")
+                            || url.to_ascii_lowercase().contains("match")
+                            || url.to_ascii_lowercase().contains("stat")
+                            || url.to_ascii_lowercase().contains("history")
+                            || url.to_ascii_lowercase().contains("player"));
+                    if request_id.is_empty() || url.is_empty() || !interesting {
+                        return Ok(());
+                    }
+                    if let Ok(mut pending) = pending_events.lock() {
+                        pending.insert(request_id.clone(), url.clone());
+                    }
+
+                    let shared = shared.clone();
+                    let app = app.clone();
+                    let pending_bodies = pending_events.clone();
+                    let params = json!({ "requestId": request_id }).to_string();
+                    let get_response_body = HSTRING::from("Network.getResponseBody");
+                    let params = HSTRING::from(params);
+                    let body_handler = CallDevToolsProtocolMethodCompletedHandler::create(
+                        Box::new(move |result, body_json| {
+                            if result.is_err() {
+                                return Ok(());
+                            }
+                            let Ok(body_result): Result<Value, _> =
+                                serde_json::from_str(&body_json)
+                            else {
+                                return Ok(());
+                            };
+                            let body = body_result
+                                .get("body")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            let Ok(payload): Result<Value, _> = serde_json::from_str(body) else {
+                                return Ok(());
+                            };
+                            let source_url = pending_bodies
+                                .lock()
+                                .ok()
+                                .and_then(|mut pending| pending.remove(&request_id))
+                                .unwrap_or_else(|| url.clone());
+                            match collector_parser::process_payload(
+                                &shared.db,
+                                &source_url,
+                                payload,
+                            ) {
+                                Ok(count) if count > 0 => {
+                                    let _ = set_status(&app, &shared, |status| {
+                                        status.logged_in = true;
+                                        status.message = format!(
+                                            "{count} partida(s) capturada(s) via WebView2."
+                                        );
+                                    });
+                                }
+                                Ok(_) => {}
+                                Err(error) => {
+                                    let _ = set_status(&app, &shared, |status| {
+                                        status.message =
+                                            format!("Falha ao processar resposta: {error}");
+                                    });
+                                }
+                            }
+                            Ok(())
+                        }),
+                    );
+                    let _ = sender.CallDevToolsProtocolMethod(
+                        &get_response_body,
+                        &params,
+                        &body_handler,
+                    );
+                    Ok(())
+                }));
+            let _ = receiver.add_DevToolsProtocolEventReceived(&event_handler, &mut token);
+        })
+        .map_err(to_string)
+}
+
+#[cfg(not(windows))]
+fn attach_network_collector(_window: &WebviewWindow, _app: AppHandle) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::allowed_origin;
+
+    #[test]
+    fn allows_tauri_and_official_origins() {
+        assert!(allowed_origin("tauri://localhost"));
+        assert!(allowed_origin("http://tauri.localhost"));
+        assert!(allowed_origin("http://127.0.0.1:1420"));
+        assert!(allowed_origin("https://stats.deadbydaylight.com"));
+        assert!(!allowed_origin("https://example.com"));
+    }
 }
