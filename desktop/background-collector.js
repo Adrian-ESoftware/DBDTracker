@@ -284,6 +284,7 @@ export function createBackgroundCollector(db, onStatus) {
   let collecting = false;
   let loggedIn = false;
   let lastRun;
+  let releaseTimer;
   const pendingResponses = new Map();
 
   const status = (message, extra = {}) => {
@@ -467,8 +468,22 @@ export function createBackgroundCollector(db, onStatus) {
     } finally {
       collecting = false;
       status(state.message);
+      scheduleBrowserRelease();
     }
     return state;
+  }
+
+  function scheduleBrowserRelease() {
+    clearTimeout(releaseTimer);
+    releaseTimer = setTimeout(() => {
+      if (!collecting && browser && !browser.isDestroyed()) {
+        console.log("[Collector] Liberando browser oculto para economizar memória.");
+        browser.forceClose = true;
+        browser.close();
+        browser = null;
+        pendingResponses.clear();
+      }
+    }, 120_000); // 2 minutos após a coleta
   }
 
   async function showLogin() {
@@ -505,9 +520,11 @@ export function createBackgroundCollector(db, onStatus) {
 
   function stop() {
     clearInterval(timer);
+    clearTimeout(releaseTimer);
     if (browser && !browser.isDestroyed()) {
       browser.forceClose = true;
       browser.close();
+      browser = null;
     }
   }
 

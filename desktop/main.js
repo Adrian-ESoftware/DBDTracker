@@ -6,6 +6,15 @@ import { openDatabase } from "./database.js";
 import { startServer } from "./server.js";
 import { createBackgroundCollector } from "./background-collector.js";
 
+// ── Otimizações de memória ──
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch("disable-gpu");
+app.commandLine.appendSwitch("disable-gpu-compositing");
+app.commandLine.appendSwitch("disable-software-rasterizer");
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=128");
+app.commandLine.appendSwitch("disable-site-isolation-trials");
+app.commandLine.appendSwitch("disable-features", "SpareRendererForSitePerProcess");
+
 // Garante instancia unica: se ja existe uma rodando, foca ela e encerra esta
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
