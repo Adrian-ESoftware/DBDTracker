@@ -123,6 +123,8 @@ const officialParticipant = player => ({
 
 function normalizeOfficialMatch(source) {
   if (!source?.matchStat || !source?.playerStat || !Array.isArray(source?.opponentStat)) return;
+  // Ignora partidas de MapShowcase (não são partidas normais)
+  if (source.matchStat?.gameType?.id === "MapShowcase") return;
   const player = source.playerStat;
   const playerRole = role(player.playerRole);
   if (!playerRole) return;
@@ -228,7 +230,8 @@ function findMatches(payload) {
   const map = new Map();
   for (const match of found) {
     if (!match.played_at || !match.role) continue;
-    const key = `${match.played_at}|${match.role}`;
+    // Usa source_id quando disponível para dedup mais preciso (evita duplicatas com amigos)
+    const key = match.source_id || `${match.played_at}|${match.role}`;
     const existing = map.get(key);
     if (!existing || isMoreOrEquallyComplete(match, existing)) {
       map.set(key, match);
@@ -337,8 +340,7 @@ export function createBackgroundCollector(db, onStatus) {
         partition: "persist:dbd-official",
         contextIsolation: true,
         spellcheck: false,
-        enableWebSQL: false,
-        webgl: false
+        enableWebSQL: false
       }
     });
 

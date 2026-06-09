@@ -149,15 +149,21 @@ app.whenReady().then(() => {
     // Silenciosamente ignora se o arquivo não existir ou for inválido
   }
 
-  server = startServer(db);
+  // Mostra a janela o mais rápido possível
   createWindow();
   createTray();
-  collector = createBackgroundCollector(db, state => {
-    if (window && !window.isDestroyed()) {
-      window.webContents.send("collector-status", state);
-    }
+
+  // Adia operações pesadas para após a janela aparecer (startup mais rápido)
+  window.once("show", () => {
+    server = startServer(db);
+    collector = createBackgroundCollector(db, state => {
+      if (window && !window.isDestroyed()) {
+        window.webContents.send("collector-status", state);
+      }
+    });
+    // Inicia o coletor 2s após a janela aparecer para não travar a UI
+    setTimeout(() => collector.start(), 2000);
   });
-  collector.start();
   globalShortcut.register("CommandOrControl+Shift+F", () => {
     if (clickThrough) {
       clickThrough = false;

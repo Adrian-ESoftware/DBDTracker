@@ -430,8 +430,8 @@ async function load() {
       get('/stats/maps' + trendsQuerySuffix),
       get('/matches?limit=15'),
       get('/official-sections'),
-      get('/stats/perks?scope=own-survivor' + (trendsGlobal ? '&global=true' : '')),
-      get('/stats/perks?scope=own-killer' + (trendsGlobal ? '&global=true' : '')),
+      get('/stats/perks?scope=own-survivor'),
+      get('/stats/perks?scope=own-killer'),
       get('/stats/perks?scope=others-survivor' + (trendsGlobal ? '&global=true' : '')),
       get('/stats/perks?scope=others-killer' + (trendsGlobal ? '&global=true' : '')),
       get('/top-characters'),
@@ -451,6 +451,11 @@ async function load() {
     itemImages     = (allAssets && allAssets.items)     || {};
     addonImages    = (allAssets && allAssets.addons)    || {};
     offeringImages = (allAssets && allAssets.offerings) || {};
+    // Adiciona TODAS as perks do catálogo ao perkImages para cobrir perks que não estão no ranking
+    var catalogPerks = (allAssets && allAssets.perks) || {};
+    for (var pName in catalogPerks) {
+      if (!perkImages[pName]) perkImages[pName] = catalogPerks[pName];
+    }
 
     // Page 1
     $('total').textContent = fmt(o.total_matches);
