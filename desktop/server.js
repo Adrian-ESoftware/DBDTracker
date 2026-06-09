@@ -25,24 +25,25 @@ export function startServer(db, port = 8765) {
     if (request.method === "OPTIONS") return reply(response, 204, {}, origin);
     try {
       const url = new URL(request.url, `http://${request.headers.host}`);
-      if (request.method === "POST" && url.pathname === "/api/matches/bulk") return reply(response, 200, ingestMatches(db, await body(request)), origin);
-      if (request.method === "POST" && url.pathname === "/api/snapshots/bulk") return reply(response, 200, ingestSnapshots(db, await body(request)), origin);
-      if (request.method === "POST" && url.pathname === "/api/official-metrics") return reply(response, 200, ingestOfficialMetrics(db, await body(request)), origin);
-      if (request.method === "POST" && url.pathname === "/api/official-sections") return reply(response, 200, ingestOfficialSections(db, await body(request)), origin);
-      if (request.method === "POST" && url.pathname === "/api/top-characters") return reply(response, 200, ingestTopCharacter(db, await body(request)), origin);
-      if (url.pathname === "/api/stats/overview") return reply(response, 200, overview(db), origin);
-      if (url.pathname === "/api/stats/killers") return reply(response, 200, killers(db), origin);
-      if (url.pathname === "/api/stats/maps") return reply(response, 200, maps(db), origin);
-      if (url.pathname === "/api/stats/perks") return reply(response, 200, perks(db, url.searchParams.get("scope") ?? "all"), origin);
-      if (url.pathname === "/api/stats/trends") return reply(response, 200, trends(db), origin);
-      if (url.pathname === "/api/assets") return reply(response, 200, assetImages(db, url.searchParams.get("type") || null), origin);
-      if (url.pathname === "/api/matches") return reply(response, 200, matches(db, Math.min(Number(url.searchParams.get("limit") ?? 100), 500)), origin);
-      if (url.pathname === "/api/official-metrics") return reply(response, 200, officialMetrics(db), origin);
-      if (url.pathname === "/api/official-sections") return reply(response, 200, officialSections(db), origin);
-      if (url.pathname === "/api/top-characters") return reply(response, 200, topCharacters(db), origin);
+      if (request.method === "POST" && url.pathname === "/api/matches/bulk") return reply(response, 200, await ingestMatches(db, await body(request)), origin);
+      if (request.method === "POST" && url.pathname === "/api/snapshots/bulk") return reply(response, 200, await ingestSnapshots(db, await body(request)), origin);
+      if (request.method === "POST" && url.pathname === "/api/official-metrics") return reply(response, 200, await ingestOfficialMetrics(db, await body(request)), origin);
+      if (request.method === "POST" && url.pathname === "/api/official-sections") return reply(response, 200, await ingestOfficialSections(db, await body(request)), origin);
+      if (request.method === "POST" && url.pathname === "/api/top-characters") return reply(response, 200, await ingestTopCharacter(db, await body(request)), origin);
+      if (url.pathname === "/api/stats/overview") return reply(response, 200, await overview(db), origin);
+      if (url.pathname === "/api/stats/killers") return reply(response, 200, await killers(db), origin);
+      if (url.pathname === "/api/stats/maps") return reply(response, 200, await maps(db), origin);
+      if (url.pathname === "/api/stats/perks") return reply(response, 200, await perks(db, url.searchParams.get("scope") ?? "all"), origin);
+      if (url.pathname === "/api/stats/trends") return reply(response, 200, await trends(db), origin);
+      if (url.pathname === "/api/assets") return reply(response, 200, await assetImages(db, url.searchParams.get("type") || null), origin);
+      if (url.pathname === "/api/matches") return reply(response, 200, await matches(db, Math.min(Number(url.searchParams.get("limit") ?? 100), 500)), origin);
+      if (url.pathname === "/api/official-metrics") return reply(response, 200, await officialMetrics(db), origin);
+      if (url.pathname === "/api/official-sections") return reply(response, 200, await officialSections(db), origin);
+      if (url.pathname === "/api/top-characters") return reply(response, 200, await topCharacters(db), origin);
       if (url.pathname === "/health") return reply(response, 200, { status: "ok" }, origin);
       reply(response, 404, { detail: "Not found" }, origin);
     } catch (error) {
+      console.error("[Server] Error processing request:", error);
       reply(response, 500, { detail: error.message }, origin);
     }
   }).listen(port, "127.0.0.1");

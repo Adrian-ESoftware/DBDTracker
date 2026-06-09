@@ -1,5 +1,7 @@
+import "dotenv/config";
 import { app, BrowserWindow, globalShortcut, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { openDatabase } from "./database.js";
 import { startServer } from "./server.js";
 import { createBackgroundCollector } from "./background-collector.js";
@@ -21,6 +23,26 @@ app.on("second-instance", () => {
     window.show();
     window.focus();
   }
+});
+
+app.on("browser-window-created", (event, newWindow) => {
+  newWindow.webContents.setWindowOpenHandler(({ url }) => {
+    console.log(`[Main] Interceptando popup: ${url}`);
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        width: 800,
+        height: 700,
+        center: true,
+        parent: null,
+        autoHideMenuBar: true,
+        webPreferences: {
+          partition: "persist:dbd-official",
+          contextIsolation: true
+        }
+      }
+    };
+  });
 });
 
 let window;
@@ -74,6 +96,19 @@ app.whenReady().then(() => {
   app.commandLine.appendSwitch("gpu-disk-cache-dir", join(app.getPath("userData"), "gpu-cache"));
 
   const db = openDatabase(join(app.getPath("userData"), "dbd_tracker.sqlite3"));
+
+  // Carrega o e-mail do último usuário ativo do config.json
+  try {
+    const configPath = join(app.getPath("userData"), "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    if (config.userEmail) {
+      db.userEmail = config.userEmail;
+      console.log(`[Main] Inicializando banco de dados com e-mail: ${db.userEmail}`);
+    }
+  } catch (err) {
+    // Silenciosamente ignora se o arquivo não existir ou for inválido
+  }
+
   server = startServer(db);
   createWindow();
   createTray();
@@ -108,6 +143,7 @@ ipcMain.handle("toggle-clicks", () => {
 ipcMain.handle("show-login", () => collector.showLogin());
 ipcMain.handle("finish-login", () => collector.finishLogin());
 ipcMain.handle("collect-now", () => collector.collect());
+ipcMain.handle("clear-login", () => collector.clearLogin());
 ipcMain.handle("collector-status", () => collector.getState());
 ipcMain.handle("toggle-size", () => {
   compact = !compact;

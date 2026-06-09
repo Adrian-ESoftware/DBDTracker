@@ -1,36 +1,26 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { createClient } from "@supabase/supabase-js";
 
-const json = value => JSON.stringify(value ?? []);
-const parse = value => {
-  try { return JSON.parse(value || "[]"); } catch { return []; }
-};
 const percentage = (count, total) => total ? Math.round(count * 1000 / total) / 10 : 0;
 const ASSET_BASE = "https://assets.live.bhvraccount.com/";
 const asset = path => path ? ASSET_BASE + path : undefined;
 
-function catalog(db) {
-  const result = { characters: new Map(), maps: new Map(), perks: new Map(), items: new Map(), addons: new Map(), offerings: new Map() };
-  for (const row of db.prepare("SELECT type,name,url FROM assets").all()) result[row.type]?.set(row.name, row.url);
-  return result;
-}
+const parse = value => {
+  if (value && typeof value === "object") return value;
+  try { return JSON.parse(value || "[]"); } catch { return []; }
+};
 
-function indexAssets(db, value) {
-  const upsert = db.prepare("INSERT OR REPLACE INTO assets (type,name,url) VALUES (?,?,?)");
-  const visit = value => {
-    if (Array.isArray(value)) return value.forEach(visit);
-    if (!value || typeof value !== "object") return;
-    if (value.name && value.image?.path) {
-      const path = value.image.path;
-      const type = path.startsWith("characters/") ? "characters" : path.startsWith("maps/") ? "maps" :
-        path.startsWith("perks/") ? "perks" : path.startsWith("items/") ? "items" :
-        path.startsWith("add-ons/") ? "addons" : path.startsWith("offerings/") ? "offerings" : null;
-      if (type) upsert.run(type, value.name, asset(path));
-    }
-    Object.values(value).forEach(visit);
-  };
-  visit(value);
-}
+const json = (dbType, value) => {
+  return dbType === "sqlite" ? JSON.stringify(value ?? []) : (value ?? []);
+};
+
+const check = res => {
+  if (res.error) {
+    throw new Error(`${res.error.message} (details: ${res.error.details || ""}, hint: ${res.error.hint || ""})`);
+  }
+  return res;
+};
 
 function isMoreOrEquallyComplete(incoming, existing) {
   if (!existing) return true;
@@ -57,10 +47,18 @@ function isMoreOrEquallyComplete(incoming, existing) {
 }
 
 export function cleanupDuplicates(db) {
+  if (db.type === "sqlite") {
+    cleanupDuplicatesSqlite(db.db);
+  } else {
+    cleanupDuplicatesSupabase(db.client);
+  }
+}
+
+function cleanupDuplicatesSqlite(db) {
   const duplicates = db.prepare(`
-    SELECT played_at, role, COUNT(*) as c
+    SELECT played_at, role, user_email, COUNT(*) as c
     FROM matches
-    GROUP BY played_at, role
+    GROUP BY played_at, role, user_email
     HAVING c > 1
   `).all();
 
@@ -69,11 +67,11 @@ export function cleanupDuplicates(db) {
   db.exec("BEGIN");
   try {
     for (const dup of duplicates) {
-      const rows = db.prepare(`
-        SELECT id, map, duration_sec, score
-        FROM matches
-        WHERE played_at = ? AND role = ?
-      `).all(dup.played_at, dup.role);
+      const query = dup.user_email
+        ? "SELECT id, map, duration_sec, score FROM matches WHERE played_at = ? AND role = ? AND user_email = ?"
+        : "SELECT id, map, duration_sec, score FROM matches WHERE played_at = ? AND role = ? AND user_email IS NULL";
+      const params = dup.user_email ? [dup.played_at, dup.role, dup.user_email] : [dup.played_at, dup.role];
+      const rows = db.prepare(query).all(...params);
 
       const matchesWithInfo = rows.map(row => {
         const pCount = db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id = ?").get(row.id)?.c || 0;
@@ -115,88 +113,351 @@ export function cleanupDuplicates(db) {
   }
 }
 
-export function openDatabase(path) {
-  const db = new DatabaseSync(path);
-  db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS matches (
-      id TEXT PRIMARY KEY, source_id TEXT, played_at TEXT NOT NULL, role TEXT NOT NULL,
-      character TEXT, map TEXT, map_realm TEXT, duration_sec INTEGER, result TEXT,
-      score INTEGER, raw_json TEXT, imported_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(played_at);
-    CREATE INDEX IF NOT EXISTS idx_matches_role ON matches(role);
-    CREATE TABLE IF NOT EXISTS loadouts (
-      match_id TEXT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
-      perks_json TEXT, item TEXT, addons_json TEXT, offering TEXT
-    );
-    CREATE TABLE IF NOT EXISTS killer_info (
-      match_id TEXT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
-      killer TEXT, kills_count INTEGER, perks_json TEXT, addons_json TEXT, offering TEXT
-    );
-    CREATE TABLE IF NOT EXISTS participants (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, match_id TEXT REFERENCES matches(id) ON DELETE CASCADE,
-      character TEXT, role TEXT, result TEXT, score INTEGER, perks_json TEXT,
-      item TEXT, addons_json TEXT, offering TEXT
-    );
-    CREATE TABLE IF NOT EXISTS source_snapshots (
-      id TEXT PRIMARY KEY, source_url TEXT, kind TEXT, captured_at TEXT, raw_json TEXT
-    );
-    CREATE TABLE IF NOT EXISTS official_metrics (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, captured_at TEXT NOT NULL,
-      label TEXT NOT NULL, value TEXT NOT NULL, source_url TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS official_sections (
-      section TEXT NOT NULL, period TEXT NOT NULL, role TEXT NOT NULL,
-      captured_at TEXT NOT NULL, raw_json TEXT NOT NULL,
-      PRIMARY KEY (section, period, role)
-    );
-    CREATE TABLE IF NOT EXISTS top_character_stats (
-      section TEXT NOT NULL, period TEXT NOT NULL, role TEXT NOT NULL,
-      character TEXT NOT NULL, captured_at TEXT NOT NULL, raw_json TEXT NOT NULL,
-      PRIMARY KEY (section, period, role)
-    );
-    CREATE TABLE IF NOT EXISTS assets (
-      type TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL,
-      PRIMARY KEY (type, name)
-    );
-  `);
-  cleanupDuplicates(db);
-  return db;
+async function cleanupDuplicatesSupabase(supabase) {
+  try {
+    const { data: matchesList } = check(await supabase
+      .from("matches")
+      .select("id, played_at, role, map, duration_sec, score, user_email"));
+    
+    if (!matchesList) return;
+
+    const groups = new Map();
+    for (const match of matchesList) {
+      const key = `${match.played_at}|${match.role}|${match.user_email || ""}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(match);
+    }
+
+    const deleteIds = [];
+    for (const [key, rows] of groups.entries()) {
+      if (rows.length <= 1) continue;
+
+      const matchIds = rows.map(r => r.id);
+      
+      const { data: pData } = check(await supabase
+        .from("participants")
+        .select("match_id")
+        .in("match_id", matchIds));
+
+      const { data: kData } = check(await supabase
+        .from("killer_info")
+        .select("match_id")
+        .in("match_id", matchIds));
+
+      const pCounts = {};
+      const hasKiller = {};
+      matchIds.forEach(id => {
+        pCounts[id] = 0;
+        hasKiller[id] = false;
+      });
+      pData?.forEach(p => pCounts[p.match_id] = (pCounts[p.match_id] || 0) + 1);
+      kData?.forEach(k => hasKiller[k.match_id] = true);
+
+      const matchesWithInfo = rows.map(row => ({
+        ...row,
+        participants_count: pCounts[row.id] || 0,
+        has_killer_info: hasKiller[row.id] || false
+      }));
+
+      matchesWithInfo.sort((a, b) => {
+        let scoreA = 0;
+        if (a.map && a.map !== "?") scoreA++;
+        if (a.duration_sec && a.duration_sec > 0) scoreA++;
+        if (a.score && a.score > 0) scoreA++;
+        if (a.has_killer_info) scoreA++;
+        if (a.participants_count > 1) scoreA += 2;
+
+        let scoreB = 0;
+        if (b.map && b.map !== "?") scoreB++;
+        if (b.duration_sec && b.duration_sec > 0) scoreB++;
+        if (b.score && b.score > 0) scoreB++;
+        if (b.has_killer_info) scoreB++;
+        if (b.participants_count > 1) scoreB += 2;
+
+        return scoreB - scoreA;
+      });
+
+      for (let i = 1; i < matchesWithInfo.length; i++) {
+        deleteIds.push(matchesWithInfo[i].id);
+      }
+    }
+
+    if (deleteIds.length > 0) {
+      check(await supabase.from("matches").delete().in("id", deleteIds));
+    }
+  } catch (err) {
+    console.error("Failed to clean up Supabase duplicates:", err);
+  }
 }
 
-function idFor(match) {
-  return match.id || match.source_id || createHash("sha256")
+function indexAssets(db, value) {
+  const upsert = db.prepare("INSERT OR REPLACE INTO assets (type,name,url) VALUES (?,?,?)");
+  const visit = value => {
+    if (Array.isArray(value)) return value.forEach(visit);
+    if (!value || typeof value !== "object") return;
+    if (value.name && value.image?.path) {
+      const path = value.image.path;
+      const type = path.startsWith("characters/") ? "characters" : path.startsWith("maps/") ? "maps" :
+        path.startsWith("perks/") ? "perks" : path.startsWith("items/") ? "items" :
+        path.startsWith("add-ons/") ? "addons" : path.startsWith("offerings/") ? "offerings" : null;
+      if (type) upsert.run(type, value.name, asset(path));
+    }
+    Object.values(value).forEach(visit);
+  };
+  visit(value);
+}
+
+async function indexAssetsSupabase(supabase, value) {
+  const visit = async val => {
+    if (Array.isArray(val)) {
+      for (const item of val) await visit(item);
+      return;
+    }
+    if (!val || typeof val !== "object") return;
+    if (val.name && val.image?.path) {
+      const path = val.image.path;
+      const type = path.startsWith("characters/") ? "characters" : path.startsWith("maps/") ? "maps" :
+        path.startsWith("perks/") ? "perks" : path.startsWith("items/") ? "items" :
+        path.startsWith("add-ons/") ? "addons" : path.startsWith("offerings/") ? "offerings" : null;
+      if (type) {
+        check(await supabase.from("assets").upsert({
+          type,
+          name: val.name,
+          url: asset(path)
+        }));
+      }
+    }
+    for (const item of Object.values(val)) {
+      await visit(item);
+    }
+  };
+  await visit(value);
+}
+
+export function openDatabase(path) {
+  let localDb = null;
+  if (path !== ":memory:") {
+    try {
+      localDb = new DatabaseSync(path);
+      localDb.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
+      localDb.exec(`
+        CREATE TABLE IF NOT EXISTS matches (
+          id TEXT PRIMARY KEY, source_id TEXT, played_at TEXT NOT NULL, role TEXT NOT NULL,
+          character TEXT, map TEXT, map_realm TEXT, duration_sec INTEGER, result TEXT,
+          score INTEGER, raw_json TEXT, imported_at TEXT NOT NULL, user_email TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(played_at);
+        CREATE INDEX IF NOT EXISTS idx_matches_role ON matches(role);
+        CREATE INDEX IF NOT EXISTS idx_matches_user_email ON matches(user_email);
+        CREATE TABLE IF NOT EXISTS loadouts (
+          match_id TEXT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
+          perks_json TEXT, item TEXT, addons_json TEXT, offering TEXT
+        );
+        CREATE TABLE IF NOT EXISTS killer_info (
+          match_id TEXT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
+          killer TEXT, kills_count INTEGER, perks_json TEXT, addons_json TEXT, offering TEXT
+        );
+        CREATE TABLE IF NOT EXISTS participants (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, match_id TEXT REFERENCES matches(id) ON DELETE CASCADE,
+          character TEXT, role TEXT, result TEXT, score INTEGER, perks_json TEXT,
+          item TEXT, addons_json TEXT, offering TEXT
+        );
+        CREATE TABLE IF NOT EXISTS source_snapshots (
+          id TEXT PRIMARY KEY, source_url TEXT, kind TEXT, captured_at TEXT, raw_json TEXT, user_email TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_snapshots_user_email ON source_snapshots(user_email);
+        CREATE TABLE IF NOT EXISTS official_metrics (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, captured_at TEXT NOT NULL,
+          label TEXT NOT NULL, value TEXT NOT NULL, source_url TEXT NOT NULL, user_email TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_metrics_user_email ON official_metrics(user_email);
+        CREATE TABLE IF NOT EXISTS official_sections (
+          section TEXT NOT NULL, period TEXT NOT NULL, role TEXT NOT NULL,
+          captured_at TEXT NOT NULL, raw_json TEXT NOT NULL, user_email TEXT NOT NULL DEFAULT 'default',
+          PRIMARY KEY (section, period, role, user_email)
+        );
+        CREATE TABLE IF NOT EXISTS top_character_stats (
+          section TEXT NOT NULL, period TEXT NOT NULL, role TEXT NOT NULL,
+          character TEXT NOT NULL, captured_at TEXT NOT NULL, raw_json TEXT NOT NULL, user_email TEXT NOT NULL DEFAULT 'default',
+          PRIMARY KEY (section, period, role, user_email)
+        );
+        CREATE TABLE IF NOT EXISTS assets (
+          type TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL,
+          PRIMARY KEY (type, name)
+        );
+      `);
+    } catch (err) {
+      console.error("Failed to initialize local SQLite DB:", err);
+    }
+  }
+
+  if (path === ":memory:" || !process.env.SUPABASE_URL) {
+    if (path === ":memory:") {
+      const db = new DatabaseSync(":memory:");
+      db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS matches (
+          id TEXT PRIMARY KEY, source_id TEXT, played_at TEXT NOT NULL, role TEXT NOT NULL,
+          character TEXT, map TEXT, map_realm TEXT, duration_sec INTEGER, result TEXT,
+          score INTEGER, raw_json TEXT, imported_at TEXT NOT NULL, user_email TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(played_at);
+        CREATE INDEX IF NOT EXISTS idx_matches_role ON matches(role);
+        CREATE INDEX IF NOT EXISTS idx_matches_user_email ON matches(user_email);
+        CREATE TABLE IF NOT EXISTS loadouts (
+          match_id TEXT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
+          perks_json TEXT, item TEXT, addons_json TEXT, offering TEXT
+        );
+        CREATE TABLE IF NOT EXISTS killer_info (
+          match_id TEXT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
+          killer TEXT, kills_count INTEGER, perks_json TEXT, addons_json TEXT, offering TEXT
+        );
+        CREATE TABLE IF NOT EXISTS participants (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, match_id TEXT REFERENCES matches(id) ON DELETE CASCADE,
+          character TEXT, role TEXT, result TEXT, score INTEGER, perks_json TEXT,
+          item TEXT, addons_json TEXT, offering TEXT
+        );
+        CREATE TABLE IF NOT EXISTS source_snapshots (
+          id TEXT PRIMARY KEY, source_url TEXT, kind TEXT, captured_at TEXT, raw_json TEXT, user_email TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_snapshots_user_email ON source_snapshots(user_email);
+        CREATE TABLE IF NOT EXISTS official_metrics (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, captured_at TEXT NOT NULL,
+          label TEXT NOT NULL, value TEXT NOT NULL, source_url TEXT NOT NULL, user_email TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_metrics_user_email ON official_metrics(user_email);
+        CREATE TABLE IF NOT EXISTS official_sections (
+          section TEXT NOT NULL, period TEXT NOT NULL, role TEXT NOT NULL,
+          captured_at TEXT NOT NULL, raw_json TEXT NOT NULL, user_email TEXT NOT NULL DEFAULT 'default',
+          PRIMARY KEY (section, period, role, user_email)
+        );
+        CREATE TABLE IF NOT EXISTS top_character_stats (
+          section TEXT NOT NULL, period TEXT NOT NULL, role TEXT NOT NULL,
+          character TEXT NOT NULL, captured_at TEXT NOT NULL, raw_json TEXT NOT NULL, user_email TEXT NOT NULL DEFAULT 'default',
+          PRIMARY KEY (section, period, role, user_email)
+        );
+        CREATE TABLE IF NOT EXISTS assets (
+          type TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL,
+          PRIMARY KEY (type, name)
+        );
+      `);
+      cleanupDuplicatesSqlite(db);
+      return { type: "sqlite", db };
+    }
+    cleanupDuplicatesSqlite(localDb);
+    return { type: "sqlite", db: localDb };
+  } else {
+    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+    cleanupDuplicatesSupabase(supabase);
+    return { type: "supabase", client: supabase };
+  }
+}
+
+function idFor(match, userEmail) {
+  const baseId = match.id || match.source_id || createHash("sha256")
     .update(`${match.played_at}|${match.role}|${match.character}|${match.map}|${match.score}`)
     .digest("hex").slice(0, 32);
+  if (userEmail) {
+    const prefix = userEmail.replace(/[^a-zA-Z0-9]/g, "_");
+    if (!baseId.startsWith(`${prefix}_`)) {
+      return `${prefix}_${baseId}`;
+    }
+  }
+  return baseId;
 }
 
-export function ingestMatches(db, matches) {
-  const upsert = db.prepare(`INSERT INTO matches
-    (id,source_id,played_at,role,character,map,map_realm,duration_sec,result,score,raw_json,imported_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET source_id=excluded.source_id,played_at=excluded.played_at,
-    role=excluded.role,character=excluded.character,map=excluded.map,map_realm=excluded.map_realm,
-    duration_sec=excluded.duration_sec,result=excluded.result,score=excluded.score,raw_json=excluded.raw_json`);
-  const addLoadout = db.prepare("INSERT INTO loadouts VALUES (?,?,?,?,?)");
-  const addKiller = db.prepare("INSERT INTO killer_info VALUES (?,?,?,?,?,?)");
-  const addParticipant = db.prepare(`INSERT INTO participants
-    (match_id,character,role,result,score,perks_json,item,addons_json,offering) VALUES (?,?,?,?,?,?,?,?,?)`);
-  const remove = ["loadouts", "killer_info", "participants"].map(table => db.prepare(`DELETE FROM ${table} WHERE match_id=?`));
-  let inserted = 0, updated = 0;
-  db.exec("BEGIN");
-  try {
+export async function ingestMatches(db, matches) {
+  const userEmail = db.userEmail ?? null;
+  if (db.type === "sqlite") {
+    const upsert = db.db.prepare(`INSERT INTO matches
+      (id,source_id,played_at,role,character,map,map_realm,duration_sec,result,score,raw_json,imported_at,user_email)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET source_id=excluded.source_id,played_at=excluded.played_at,
+      role=excluded.role,character=excluded.character,map=excluded.map,map_realm=excluded.map_realm,
+      duration_sec=excluded.duration_sec,result=excluded.result,score=excluded.score,raw_json=excluded.raw_json,user_email=excluded.user_email`);
+    const addLoadout = db.db.prepare("INSERT INTO loadouts VALUES (?,?,?,?,?)");
+    const addKiller = db.db.prepare("INSERT INTO killer_info VALUES (?,?,?,?,?,?)");
+    const addParticipant = db.db.prepare(`INSERT INTO participants
+      (match_id,character,role,result,score,perks_json,item,addons_json,offering) VALUES (?,?,?,?,?,?,?,?,?)`);
+    const remove = ["loadouts", "killer_info", "participants"].map(table => db.db.prepare(`DELETE FROM ${table} WHERE match_id=?`));
+    let inserted = 0, updated = 0;
+    db.db.exec("BEGIN");
+    try {
+      for (const match of matches) {
+        if (!match.played_at || !match.role) continue;
+
+        const existing = db.db.prepare("SELECT id, map, duration_sec, score FROM matches WHERE played_at = ? AND role = ? AND (user_email = ? OR (? IS NULL AND user_email IS NULL))").get(match.played_at, match.role, userEmail, userEmail);
+
+        let id;
+        if (existing) {
+          const pCount = db.db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id = ?").get(existing.id)?.c || 0;
+          const hasKiller = db.db.prepare("SELECT 1 FROM killer_info WHERE match_id = ?").get(existing.id) ? 1 : 0;
+          existing.participants_count = pCount;
+          existing.has_killer_info = hasKiller;
+
+          if (!isMoreOrEquallyComplete(match, existing)) {
+            continue;
+          }
+          id = existing.id;
+          updated++;
+        } else {
+          id = idFor(match, userEmail);
+          inserted++;
+        }
+
+        upsert.run(id, match.source_id ?? null, match.played_at, match.role, match.character ?? null, match.map ?? null,
+          match.map_realm ?? null, match.duration_sec ?? null, match.result ?? null, match.score ?? null,
+          match.raw == null ? null : JSON.stringify(match.raw), new Date().toISOString(), userEmail);
+        if (match.raw) indexAssets(db.db, match.raw);
+        remove.forEach(statement => statement.run(id));
+        const loadout = match.loadout ?? {};
+        addLoadout.run(id, json("sqlite", loadout.perks), loadout.item ?? null, json("sqlite", loadout.addons), loadout.offering ?? null);
+        if (match.killer_info) addKiller.run(id, match.killer_info.killer ?? null, match.killer_info.kills_count ?? null,
+          json("sqlite", match.killer_info.perks), json("sqlite", match.killer_info.addons), match.killer_info.offering ?? null);
+        for (const p of match.participants ?? []) addParticipant.run(id, p.character ?? null, p.role, p.result ?? null,
+          p.score ?? null, json("sqlite", p.perks), p.item ?? null, json("sqlite", p.addons), p.offering ?? null);
+      }
+      db.db.exec("COMMIT");
+    } catch (error) {
+      db.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { received: matches.length, inserted, updated };
+  } else {
+    const supabase = db.client;
+    let inserted = 0, updated = 0;
+
     for (const match of matches) {
       if (!match.played_at || !match.role) continue;
 
-      const existing = db.prepare("SELECT id, map, duration_sec, score FROM matches WHERE played_at = ? AND role = ?").get(match.played_at, match.role);
+      let query = supabase
+        .from("matches")
+        .select("id, map, duration_sec, score")
+        .eq("played_at", match.played_at)
+        .eq("role", match.role);
+      if (userEmail) {
+        query = query.eq("user_email", userEmail);
+      } else {
+        query = query.is("user_email", null);
+      }
+      const { data: existingList } = check(await query);
+
+      const existing = existingList?.[0];
 
       let id;
       if (existing) {
-        const pCount = db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id = ?").get(existing.id)?.c || 0;
-        const hasKiller = db.prepare("SELECT 1 FROM killer_info WHERE match_id = ?").get(existing.id) ? 1 : 0;
-        existing.participants_count = pCount;
-        existing.has_killer_info = hasKiller;
+        const { count: pCount } = check(await supabase
+          .from("participants")
+          .select("*", { count: "exact", head: true })
+          .eq("match_id", existing.id));
+
+        const { data: kData } = check(await supabase
+          .from("killer_info")
+          .select("match_id")
+          .eq("match_id", existing.id));
+
+        existing.participants_count = pCount || 0;
+        existing.has_killer_info = !!kData?.length;
 
         if (!isMoreOrEquallyComplete(match, existing)) {
           continue;
@@ -204,142 +465,452 @@ export function ingestMatches(db, matches) {
         id = existing.id;
         updated++;
       } else {
-        id = idFor(match);
+        id = idFor(match, userEmail);
         inserted++;
       }
 
-      upsert.run(id, match.source_id ?? null, match.played_at, match.role, match.character ?? null, match.map ?? null,
-        match.map_realm ?? null, match.duration_sec ?? null, match.result ?? null, match.score ?? null,
-        match.raw == null ? null : JSON.stringify(match.raw), new Date().toISOString());
-      if (match.raw) indexAssets(db, match.raw);
-      remove.forEach(statement => statement.run(id));
+      check(await supabase.from("matches").upsert({
+        id,
+        source_id: match.source_id ?? null,
+        played_at: match.played_at,
+        role: match.role,
+        character: match.character ?? null,
+        map: match.map ?? null,
+        map_realm: match.map_realm ?? null,
+        duration_sec: match.duration_sec ?? null,
+        result: match.result ?? null,
+        score: match.score ?? null,
+        raw_json: match.raw ?? null,
+        imported_at: new Date().toISOString(),
+        user_email: userEmail
+      }));
+
+      if (match.raw) {
+        await indexAssetsSupabase(supabase, match.raw);
+      }
+
+      check(await supabase.from("loadouts").delete().eq("match_id", id));
+      check(await supabase.from("killer_info").delete().eq("match_id", id));
+      check(await supabase.from("participants").delete().eq("match_id", id));
+
       const loadout = match.loadout ?? {};
-      addLoadout.run(id, json(loadout.perks), loadout.item ?? null, json(loadout.addons), loadout.offering ?? null);
-      if (match.killer_info) addKiller.run(id, match.killer_info.killer ?? null, match.killer_info.kills_count ?? null,
-        json(match.killer_info.perks), json(match.killer_info.addons), match.killer_info.offering ?? null);
-      for (const p of match.participants ?? []) addParticipant.run(id, p.character ?? null, p.role, p.result ?? null,
-        p.score ?? null, json(p.perks), p.item ?? null, json(p.addons), p.offering ?? null);
+      check(await supabase.from("loadouts").insert({
+        match_id: id,
+        perks_json: loadout.perks || [],
+        item: loadout.item ?? null,
+        addons_json: loadout.addons || [],
+        offering: loadout.offering ?? null
+      }));
+
+      if (match.killer_info) {
+        check(await supabase.from("killer_info").insert({
+          match_id: id,
+          killer: match.killer_info.killer ?? null,
+          kills_count: match.killer_info.kills_count ?? null,
+          perks_json: match.killer_info.perks || [],
+          addons_json: match.killer_info.addons || [],
+          offering: match.killer_info.offering ?? null
+        }));
+      }
+
+      if (match.participants?.length) {
+        const partsToInsert = match.participants.map(p => ({
+          match_id: id,
+          character: p.character ?? null,
+          role: p.role,
+          result: p.result ?? null,
+          score: p.score ?? null,
+          perks_json: p.perks || [],
+          item: p.item ?? null,
+          addons_json: p.addons || [],
+          offering: p.offering ?? null
+        }));
+        check(await supabase.from("participants").insert(partsToInsert));
+      }
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
+
+    return { received: matches.length, inserted, updated };
   }
-  return { received: matches.length, inserted, updated };
 }
 
-export function ingestSnapshots(db, snapshots) {
-  const insert = db.prepare("INSERT OR IGNORE INTO source_snapshots VALUES (?,?,?,?,?)");
-  let inserted = 0;
-  for (const item of snapshots) {
-    const raw = JSON.stringify(item.raw);
-    const id = createHash("sha256").update(`${item.source_url}|${item.captured_at}|${raw}`).digest("hex");
-    inserted += Number(insert.run(id, item.source_url, item.kind ?? "unknown", item.captured_at, raw).changes);
-  }
-  return { received: snapshots.length, inserted, updated: 0 };
-}
-
-export function ingestOfficialMetrics(db, payload) {
-  const insert = db.prepare("INSERT INTO official_metrics (captured_at,label,value,source_url) VALUES (?,?,?,?)");
-  db.exec("BEGIN");
-  try {
-    db.prepare("DELETE FROM official_metrics").run();
-    for (const metric of payload.metrics ?? []) {
-      if (metric.label && metric.value) insert.run(payload.captured_at, metric.label, metric.value, payload.source_url);
+export async function ingestSnapshots(db, snapshots) {
+  const userEmail = db.userEmail ?? null;
+  if (db.type === "sqlite") {
+    const insert = db.db.prepare("INSERT OR IGNORE INTO source_snapshots (id,source_url,kind,captured_at,raw_json,user_email) VALUES (?,?,?,?,?,?)");
+    let inserted = 0;
+    for (const item of snapshots) {
+      const raw = JSON.stringify(item.raw);
+      const id = createHash("sha256").update(`${item.source_url}|${item.captured_at}|${raw}`).digest("hex");
+      inserted += Number(insert.run(id, item.source_url, item.kind ?? "unknown", item.captured_at, raw, userEmail).changes);
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
+    return { received: snapshots.length, inserted, updated: 0 };
+  } else {
+    const supabase = db.client;
+    let inserted = 0;
+    for (const item of snapshots) {
+      const id = createHash("sha256").update(`${item.source_url}|${item.captured_at}|${JSON.stringify(item.raw)}`).digest("hex");
+      const { error } = await supabase.from("source_snapshots").insert({
+        id,
+        source_url: item.source_url,
+        kind: item.kind ?? "unknown",
+        captured_at: item.captured_at,
+        raw_json: item.raw,
+        user_email: userEmail
+      });
+      if (!error) inserted++;
+    }
+    return { received: snapshots.length, inserted, updated: 0 };
   }
-  return { received: payload.metrics?.length ?? 0 };
 }
 
-export function officialMetrics(db) {
-  return db.prepare("SELECT label,value,captured_at,source_url FROM official_metrics ORDER BY id LIMIT 100").all();
+export async function ingestOfficialMetrics(db, payload) {
+  const userEmail = db.userEmail ?? null;
+  if (db.type === "sqlite") {
+    const insert = db.db.prepare("INSERT INTO official_metrics (captured_at,label,value,source_url,user_email) VALUES (?,?,?,?,?)");
+    db.db.exec("BEGIN");
+    try {
+      if (userEmail) {
+        db.db.prepare("DELETE FROM official_metrics WHERE user_email = ?").run(userEmail);
+      } else {
+        db.db.prepare("DELETE FROM official_metrics WHERE user_email IS NULL").run();
+      }
+      for (const metric of payload.metrics ?? []) {
+        if (metric.label && metric.value) insert.run(payload.captured_at, metric.label, metric.value, payload.source_url, userEmail);
+      }
+      db.db.exec("COMMIT");
+    } catch (error) {
+      db.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { received: payload.metrics?.length ?? 0 };
+  } else {
+    const supabase = db.client;
+    let deleteQuery = supabase.from("official_metrics").delete();
+    if (userEmail) {
+      deleteQuery = deleteQuery.eq("user_email", userEmail);
+    } else {
+      deleteQuery = deleteQuery.is("user_email", null);
+    }
+    check(await deleteQuery);
+    const metricsToInsert = (payload.metrics ?? [])
+      .filter(m => m.label && m.value)
+      .map(m => ({
+        captured_at: payload.captured_at,
+        label: m.label,
+        value: m.value,
+        source_url: payload.source_url,
+        user_email: userEmail
+      }));
+    if (metricsToInsert.length) {
+      await supabase.from("official_metrics").insert(metricsToInsert);
+    }
+    return { received: payload.metrics?.length ?? 0 };
+  }
 }
 
-export function ingestOfficialSections(db, payload) {
-  const upsert = db.prepare(`INSERT INTO official_sections (section,period,role,captured_at,raw_json)
-    VALUES (?,?,?,?,?) ON CONFLICT(section,period,role) DO UPDATE SET
-    captured_at=excluded.captured_at,raw_json=excluded.raw_json`);
-  let received = 0;
-  db.exec("BEGIN");
-  try {
+export async function officialMetrics(db) {
+  const userEmail = db.userEmail ?? null;
+  if (db.type === "sqlite") {
+    const query = userEmail
+      ? "SELECT label,value,captured_at,source_url FROM official_metrics WHERE user_email = ? ORDER BY id LIMIT 100"
+      : "SELECT label,value,captured_at,source_url FROM official_metrics WHERE user_email IS NULL ORDER BY id LIMIT 100";
+    return userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+  } else {
+    let query = db.client
+      .from("official_metrics")
+      .select("label,value,captured_at,source_url")
+      .order("id", { ascending: true })
+      .limit(100);
+    if (userEmail) {
+      query = query.eq("user_email", userEmail);
+    } else {
+      query = query.is("user_email", null);
+    }
+    const { data } = check(await query);
+    return data || [];
+  }
+}
+
+export async function ingestOfficialSections(db, payload) {
+  const userEmail = db.userEmail ?? "default";
+  if (db.type === "sqlite") {
+    const upsert = db.db.prepare(`INSERT INTO official_sections (section,period,role,captured_at,raw_json,user_email)
+      VALUES (?,?,?,?,?,?) ON CONFLICT(section,period,role,user_email) DO UPDATE SET
+      captured_at=excluded.captured_at,raw_json=excluded.raw_json`);
+    let received = 0;
+    db.db.exec("BEGIN");
+    try {
+      for (const [period, periodData] of Object.entries(payload.data ?? {})) {
+        if (!periodData?.global) continue;
+        for (const [role, values] of Object.entries(periodData.global)) {
+          upsert.run(payload.section ?? "overview", period, role, payload.captured_at, JSON.stringify(values), userEmail);
+          received++;
+        }
+      }
+      db.db.exec("COMMIT");
+    } catch (error) {
+      db.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { received };
+  } else {
+    const supabase = db.client;
+    let received = 0;
     for (const [period, periodData] of Object.entries(payload.data ?? {})) {
       if (!periodData?.global) continue;
       for (const [role, values] of Object.entries(periodData.global)) {
-        upsert.run(payload.section ?? "overview", period, role, payload.captured_at, JSON.stringify(values));
+        await supabase.from("official_sections").upsert({
+          section: payload.section ?? "overview",
+          period,
+          role,
+          captured_at: payload.captured_at,
+          raw_json: values,
+          user_email: userEmail
+        });
         received++;
       }
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
+    return { received };
   }
-  return { received };
 }
 
-export function officialSections(db) {
-  return db.prepare("SELECT section,period,role,captured_at,raw_json FROM official_sections ORDER BY period,role").all()
-    .map(row => ({ ...row, values: parse(row.raw_json), raw_json: undefined }));
+export async function officialSections(db) {
+  const userEmail = db.userEmail ?? "default";
+  if (db.type === "sqlite") {
+    return db.db.prepare("SELECT section,period,role,captured_at,raw_json FROM official_sections WHERE user_email = ? ORDER BY period,role").all(userEmail)
+      .map(row => ({ ...row, values: parse(row.raw_json), raw_json: undefined }));
+  } else {
+    const { data } = check(await db.client
+      .from("official_sections")
+      .select("section,period,role,captured_at,raw_json")
+      .eq("user_email", userEmail)
+      .order("period", { ascending: true })
+      .order("role", { ascending: true }));
+    return (data || []).map(row => ({
+      ...row,
+      values: parse(row.raw_json),
+      raw_json: undefined
+    }));
+  }
 }
 
-export function ingestTopCharacter(db, payload) {
-  db.prepare(`INSERT INTO top_character_stats (section,period,role,character,captured_at,raw_json)
-    VALUES (?,?,?,?,?,?) ON CONFLICT(section,period,role) DO UPDATE SET
-    character=excluded.character,captured_at=excluded.captured_at,raw_json=excluded.raw_json`)
-    .run(payload.section, payload.period, payload.role, payload.character, payload.captured_at, JSON.stringify(payload.values));
-  return { received: 1 };
+export async function ingestTopCharacter(db, payload) {
+  const userEmail = db.userEmail ?? "default";
+  if (db.type === "sqlite") {
+    db.db.prepare(`INSERT INTO top_character_stats (section,period,role,character,captured_at,raw_json,user_email)
+      VALUES (?,?,?,?,?,?,?) ON CONFLICT(section,period,role,user_email) DO UPDATE SET
+      character=excluded.character,captured_at=excluded.captured_at,raw_json=excluded.raw_json`)
+      .run(payload.section, payload.period, payload.role, payload.character, payload.captured_at, JSON.stringify(payload.values), userEmail);
+    return { received: 1 };
+  } else {
+    const supabase = db.client;
+    await supabase.from("top_character_stats").upsert({
+      section: payload.section,
+      period: payload.period,
+      role: payload.role,
+      character: payload.character,
+      captured_at: payload.captured_at,
+      raw_json: payload.values,
+      user_email: userEmail
+    });
+    return { received: 1 };
+  }
 }
 
-export function topCharacters(db) {
-  const images = catalog(db).characters;
-  return db.prepare("SELECT section,period,role,character,captured_at,raw_json FROM top_character_stats ORDER BY role").all()
-    .map(row => {
+async function catalog(db) {
+  const result = { characters: new Map(), maps: new Map(), perks: new Map(), items: new Map(), addons: new Map(), offerings: new Map() };
+  if (db.type === "sqlite") {
+    for (const row of db.db.prepare("SELECT type,name,url FROM assets").all()) result[row.type]?.set(row.name, row.url);
+  } else {
+    const { data } = check(await db.client.from("assets").select("type,name,url"));
+    (data || []).forEach(row => result[row.type]?.set(row.name, row.url));
+  }
+  return result;
+}
+
+export async function topCharacters(db) {
+  const userEmail = db.userEmail ?? "default";
+  const images = await catalog(db);
+  if (db.type === "sqlite") {
+    return db.db.prepare("SELECT section,period,role,character,captured_at,raw_json FROM top_character_stats WHERE user_email = ? ORDER BY role").all(userEmail)
+      .map(row => {
+        const values = parse(row.raw_json);
+        delete values.image;
+        return { ...row, image: images.characters.get(row.character), values, raw_json: undefined };
+      });
+  } else {
+    const { data } = check(await db.client
+      .from("top_character_stats")
+      .select("section,period,role,character,captured_at,raw_json")
+      .eq("user_email", userEmail)
+      .order("role", { ascending: true }));
+    return (data || []).map(row => {
       const values = parse(row.raw_json);
       delete values.image;
-      return { ...row, image: images.get(row.character), values, raw_json: undefined };
+      return {
+        ...row,
+        image: images.characters.get(row.character),
+        values,
+        raw_json: undefined
+      };
     });
+  }
 }
 
-export function matches(db, limit = 100) {
-  const images = catalog(db);
-  return db.prepare("SELECT * FROM matches ORDER BY played_at DESC LIMIT ?").all(limit).map(match => {
-    const loadout = db.prepare("SELECT * FROM loadouts WHERE match_id=?").get(match.id);
-    const killer = db.prepare("SELECT * FROM killer_info WHERE match_id=?").get(match.id);
-    const participants = db.prepare("SELECT * FROM participants WHERE match_id=?").all(match.id);
-    return {
-      ...match,
-      character_image: images.characters.get(match.character),
-      map_image: images.maps.get(match.map),
-      loadout: { perks: parse(loadout?.perks_json), item: loadout?.item, addons: parse(loadout?.addons_json), offering: loadout?.offering },
-      killer_info: killer ? { killer: killer.killer, kills_count: killer.kills_count, perks: parse(killer.perks_json), addons: parse(killer.addons_json), offering: killer.offering } : null,
-      participants: participants.map(p => ({ ...p, perks: parse(p.perks_json), addons: parse(p.addons_json) }))
-    };
-  });
+export async function matches(db, limit = 100) {
+  const userEmail = db.userEmail ?? null;
+  const images = await catalog(db);
+  if (db.type === "sqlite") {
+    const query = userEmail
+      ? "SELECT * FROM matches WHERE user_email = ? ORDER BY played_at DESC LIMIT ?"
+      : "SELECT * FROM matches WHERE user_email IS NULL ORDER BY played_at DESC LIMIT ?";
+    return db.db.prepare(query).all(...(userEmail ? [userEmail, limit] : [limit])).map(match => {
+      const loadout = db.db.prepare("SELECT * FROM loadouts WHERE match_id=?").get(match.id);
+      const killer = db.db.prepare("SELECT * FROM killer_info WHERE match_id=?").get(match.id);
+      const participants = db.db.prepare("SELECT * FROM participants WHERE match_id=?").all(match.id);
+      return {
+        ...match,
+        character_image: images.characters.get(match.character),
+        map_image: images.maps.get(match.map),
+        loadout: { perks: parse(loadout?.perks_json), item: loadout?.item, addons: parse(loadout?.addons_json), offering: loadout?.offering },
+        killer_info: killer ? { killer: killer.killer, kills_count: killer.kills_count, perks: parse(killer.perks_json), addons: parse(killer.addons_json), offering: killer.offering } : null,
+        participants: participants.map(p => ({ ...p, perks: parse(p.perks_json), addons: parse(p.addons_json) }))
+      };
+    });
+  } else {
+    let query = db.client.from("matches").select("*");
+    if (userEmail) {
+      query = query.eq("user_email", userEmail);
+    } else {
+      query = query.is("user_email", null);
+    }
+    const { data: matchesData } = check(await query.order("played_at", { ascending: false }).limit(limit));
+
+    if (!matchesData?.length) return [];
+
+    const matchIds = matchesData.map(m => m.id);
+
+    const { data: loadouts } = check(await db.client.from("loadouts").select("*").in("match_id", matchIds));
+    const { data: killers } = check(await db.client.from("killer_info").select("*").in("match_id", matchIds));
+    const { data: participants } = check(await db.client.from("participants").select("*").in("match_id", matchIds));
+
+    const loadoutsMap = new Map((loadouts || []).map(l => [l.match_id, l]));
+    const killersMap = new Map((killers || []).map(k => [k.match_id, k]));
+    
+    const participantsMap = new Map();
+    (participants || []).forEach(p => {
+      if (!participantsMap.has(p.match_id)) participantsMap.set(p.match_id, []);
+      participantsMap.get(p.match_id).push(p);
+    });
+
+    return matchesData.map(match => {
+      const loadout = loadoutsMap.get(match.id);
+      const killer = killersMap.get(match.id);
+      const parts = participantsMap.get(match.id) || [];
+      return {
+        ...match,
+        character_image: images.characters.get(match.character),
+        map_image: images.maps.get(match.map),
+        loadout: {
+          perks: parse(loadout?.perks_json),
+          item: loadout?.item,
+          addons: parse(loadout?.addons_json),
+          offering: loadout?.offering
+        },
+        killer_info: killer ? {
+          killer: killer.killer,
+          kills_count: killer.kills_count,
+          perks: parse(killer.perks_json),
+          addons: parse(killer.addons_json),
+          offering: killer.offering
+        } : null,
+        participants: parts.map(p => ({
+          ...p,
+          perks: parse(p.perks_json),
+          addons: parse(p.addons_json)
+        }))
+      };
+    });
+  }
 }
 
-export function overview(db) {
-  const rows = db.prepare("SELECT role,result,score,id FROM matches").all();
+export async function overview(db) {
+  const userEmail = db.userEmail ?? null;
+  let rows;
+  if (db.type === "sqlite") {
+    const query = userEmail
+      ? "SELECT role,result,score,id FROM matches WHERE user_email = ?"
+      : "SELECT role,result,score,id FROM matches WHERE user_email IS NULL";
+    rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+  } else {
+    let query = db.client.from("matches").select("role,result,score,id");
+    if (userEmail) {
+      query = query.eq("user_email", userEmail);
+    } else {
+      query = query.is("user_email", null);
+    }
+    const { data } = check(await query);
+    rows = data || [];
+  }
+
   const survivors = rows.filter(row => row.role === "survivor");
   const killers = rows.filter(row => row.role === "killer");
   const wins = survivors.filter(row => /escaped|escape|fugiu|win|victory/i.test(row.result ?? "")).length;
-  const fourK = killers.filter(row => db.prepare("SELECT kills_count FROM killer_info WHERE match_id=?").get(row.id)?.kills_count === 4).length;
+  
+  let fourK = 0;
+  if (db.type === "sqlite") {
+    fourK = killers.filter(row => db.db.prepare("SELECT kills_count FROM killer_info WHERE match_id=?").get(row.id)?.kills_count === 4).length;
+  } else {
+    const killerIds = killers.map(k => k.id);
+    if (killerIds.length) {
+      const { data: killerInfos } = check(await db.client.from("killer_info").select("match_id, kills_count").in("match_id", killerIds));
+      const killerInfoMap = new Map((killerInfos || []).map(ki => [ki.match_id, ki]));
+      fourK = killers.filter(row => killerInfoMap.get(row.id)?.kills_count === 4).length;
+    }
+  }
+
   const scores = rows.map(row => row.score).filter(Number.isFinite);
 
   let survWins = 0, survDraws = 0, survLosses = 0;
   let killerWins = 0, killerDraws = 0, killerLosses = 0;
 
+  const matchIds = rows.map(r => r.id);
+  const killerInfoMap = new Map();
+  const participantsCountMap = new Map();
+
+  if (matchIds.length) {
+    if (db.type === "sqlite") {
+      for (const row of rows) {
+        const kInfo = db.db.prepare("SELECT kills_count FROM killer_info WHERE match_id=?").get(row.id);
+        if (kInfo) killerInfoMap.set(row.id, kInfo);
+        const pCount = db.db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id=? AND role='survivor' AND (result LIKE '%escape%' OR result LIKE '%escaped%' OR result LIKE '%fugiu%')").get(row.id)?.c || 0;
+        participantsCountMap.set(row.id, pCount);
+      }
+    } else {
+      const { data: killerInfos } = check(await db.client.from("killer_info").select("match_id, kills_count").in("match_id", matchIds));
+      (killerInfos || []).forEach(ki => killerInfoMap.set(ki.match_id, ki));
+
+      const { data: escapedParticipants } = check(await db.client
+        .from("participants")
+        .select("match_id")
+        .eq("role", "survivor")
+        .or("result.ilike.%escape%,result.ilike.%escaped%,result.ilike.%fugiu%")
+        .in("match_id", matchIds));
+
+      (escapedParticipants || []).forEach(ep => {
+        participantsCountMap.set(ep.match_id, (participantsCountMap.get(ep.match_id) || 0) + 1);
+      });
+    }
+  }
+
   for (const row of rows) {
     let kills = null;
-    const kInfo = db.prepare("SELECT kills_count FROM killer_info WHERE match_id=?").get(row.id);
+    const kInfo = killerInfoMap.get(row.id);
     if (kInfo && kInfo.kills_count != null) {
       kills = kInfo.kills_count;
     } else {
       const playerEscaped = /escaped|escape|fugiu|win/i.test(row.result ?? "") ? 1 : 0;
-      const otherEscapes = db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id=? AND role='survivor' AND (result LIKE '%escape%' OR result LIKE '%escaped%' OR result LIKE '%fugiu%')").get(row.id)?.c || 0;
+      const otherEscapes = participantsCountMap.get(row.id) || 0;
       kills = 4 - (playerEscaped + otherEscapes);
     }
 
@@ -369,21 +940,43 @@ export function overview(db) {
   };
 }
 
-function frequency(rows, key, outputKey = key) {
-  const counts = new Map();
-  rows.filter(row => row[key]).forEach(row => counts.set(row[key], (counts.get(row[key]) ?? 0) + 1));
-  const total = [...counts.values()].reduce((a, b) => a + b, 0);
-  return [...counts].map(([name, count]) => ({ [outputKey]: name, count, pct: percentage(count, total) })).sort((a, b) => b.count - a.count);
-}
-
-export const killers = db => {
-  const images = catalog(db).characters;
-  const rows = db.prepare(`
-    SELECT killer_info.killer, killer_info.kills_count, matches.result
-    FROM killer_info
-    JOIN matches ON matches.id = killer_info.match_id
-    WHERE killer_info.killer IS NOT NULL AND matches.role = 'survivor'
-  `).all();
+export async function killers(db) {
+  const userEmail = db.userEmail ?? null;
+  const images = (await catalog(db)).characters;
+  let rows;
+  if (db.type === "sqlite") {
+    const query = userEmail
+      ? `
+      SELECT killer_info.killer, killer_info.kills_count, matches.result
+      FROM killer_info
+      JOIN matches ON matches.id = killer_info.match_id
+      WHERE killer_info.killer IS NOT NULL AND matches.role = 'survivor' AND matches.user_email = ?
+    `
+      : `
+      SELECT killer_info.killer, killer_info.kills_count, matches.result
+      FROM killer_info
+      JOIN matches ON matches.id = killer_info.match_id
+      WHERE killer_info.killer IS NOT NULL AND matches.role = 'survivor' AND matches.user_email IS NULL
+    `;
+    rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+  } else {
+    let query = db.client
+      .from("killer_info")
+      .select("killer, kills_count, matches!inner(result, role, user_email)")
+      .eq("matches.role", "survivor")
+      .not("killer", "is", null);
+    if (userEmail) {
+      query = query.eq("matches.user_email", userEmail);
+    } else {
+      query = query.is("matches.user_email", null);
+    }
+    const { data } = check(await query);
+    rows = (data || []).map(row => ({
+      killer: row.killer,
+      kills_count: row.kills_count,
+      result: row.matches.result
+    }));
+  }
 
   const groups = new Map();
   for (const row of rows) {
@@ -414,16 +1007,69 @@ export const killers = db => {
       image: images.get(name)
     };
   }).sort((a, b) => b.count - a.count);
-};
+}
 
-export const maps = db => {
-  const images = catalog(db).maps;
-  const rows = db.prepare(`
-    SELECT m.map, m.role, m.result, m.map_realm, k.kills_count, m.id
-    FROM matches m
-    LEFT JOIN killer_info k ON m.id = k.match_id
-    WHERE m.map IS NOT NULL
-  `).all();
+export async function maps(db) {
+  const userEmail = db.userEmail ?? null;
+  const images = (await catalog(db)).maps;
+  let rows;
+  if (db.type === "sqlite") {
+    const query = userEmail
+      ? `
+      SELECT m.map, m.role, m.result, m.map_realm, k.kills_count, m.id
+      FROM matches m
+      LEFT JOIN killer_info k ON m.id = k.match_id
+      WHERE m.map IS NOT NULL AND m.user_email = ?
+    `
+      : `
+      SELECT m.map, m.role, m.result, m.map_realm, k.kills_count, m.id
+      FROM matches m
+      LEFT JOIN killer_info k ON m.id = k.match_id
+      WHERE m.map IS NOT NULL AND m.user_email IS NULL
+    `;
+    rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+  } else {
+    let query = db.client
+      .from("matches")
+      .select("map, role, result, map_realm, id, killer_info(kills_count)")
+      .not("map", "is", null);
+    if (userEmail) {
+      query = query.eq("user_email", userEmail);
+    } else {
+      query = query.is("user_email", null);
+    }
+    const { data } = check(await query);
+    rows = (data || []).map(row => ({
+      map: row.map,
+      role: row.role,
+      result: row.result,
+      map_realm: row.map_realm,
+      id: row.id,
+      kills_count: row.killer_info?.[0]?.kills_count ?? null
+    }));
+  }
+
+  const matchIds = rows.map(r => r.id);
+  const participantsCountMap = new Map();
+  if (matchIds.length) {
+    if (db.type === "sqlite") {
+      for (const row of rows) {
+        const pCount = db.db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id=? AND role='survivor' AND (result LIKE '%escape%' OR result LIKE '%escaped%' OR result LIKE '%fugiu%')").get(row.id)?.c || 0;
+        participantsCountMap.set(row.id, pCount);
+      }
+    } else {
+      const { data: escapedParticipants } = check(await db.client
+        .from("participants")
+        .select("match_id")
+        .eq("role", "survivor")
+        .or("result.ilike.%escape%,result.ilike.%escaped%,result.ilike.%fugiu%")
+        .in("match_id", matchIds));
+
+      (escapedParticipants || []).forEach(ep => {
+        participantsCountMap.set(ep.match_id, (participantsCountMap.get(ep.match_id) || 0) + 1);
+      });
+    }
+  }
 
   const groups = new Map();
   for (const row of rows) {
@@ -439,7 +1085,7 @@ export const maps = db => {
       kills = row.kills_count;
     } else {
       const playerEscaped = /escaped|escape|fugiu|win/i.test(row.result ?? "") ? 1 : 0;
-      const otherEscapes = db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id=? AND role='survivor' AND (result LIKE '%escape%' OR result LIKE '%escaped%' OR result LIKE '%fugiu%')").get(row.id)?.c || 0;
+      const otherEscapes = participantsCountMap.get(row.id) || 0;
       kills = 4 - (playerEscaped + otherEscapes);
     }
 
@@ -465,46 +1111,198 @@ export const maps = db => {
       image: images.get(name)
     };
   }).sort((a, b) => b.count - a.count);
-};
-export function perks(db, scope = "against") {
-  const images = catalog(db).perks;
-  let rows;
-  if (scope === "own-survivor") {
-    rows = db.prepare("SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='survivor'").all();
-  } else if (scope === "own-killer") {
-    rows = db.prepare("SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='killer'").all();
-  } else if (scope === "others-survivor") {
-    rows = db.prepare("SELECT perks_json FROM participants WHERE role='survivor'").all();
-  } else if (scope === "others-killer") {
-    rows = db.prepare("SELECT k.perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id WHERE m.role='survivor' AND k.perks_json IS NOT NULL").all();
-  } else if (scope === "all") {
-    rows = ["loadouts","participants"].flatMap(t => db.prepare(`SELECT perks_json FROM ${t}`).all());
-  } else if (scope === "own") {
-    rows = db.prepare("SELECT perks_json FROM loadouts").all();
-  } else if (scope === "killer") {
-    rows = db.prepare("SELECT perks_json FROM killer_info").all();
+}
+
+export async function perks(db, scope = "against") {
+  const userEmail = db.userEmail ?? null;
+  const images = (await catalog(db)).perks;
+  let rows = [];
+  if (db.type === "sqlite") {
+    if (scope === "own-survivor") {
+      const query = userEmail
+        ? "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='survivor' AND m.user_email = ?"
+        : "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='survivor' AND m.user_email IS NULL";
+      rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+    } else if (scope === "own-killer") {
+      const query = userEmail
+        ? "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='killer' AND m.user_email = ?"
+        : "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='killer' AND m.user_email IS NULL";
+      rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+    } else if (scope === "others-survivor") {
+      const query = userEmail
+        ? "SELECT p.perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE p.role='survivor' AND m.user_email = ?"
+        : "SELECT p.perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE p.role='survivor' AND m.user_email IS NULL";
+      rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+    } else if (scope === "others-killer") {
+      const query = userEmail
+        ? "SELECT k.perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id WHERE m.role='survivor' AND k.perks_json IS NOT NULL AND m.user_email = ?"
+        : "SELECT k.perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id WHERE m.role='survivor' AND k.perks_json IS NOT NULL AND m.user_email IS NULL";
+      rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+    } else if (scope === "all") {
+      const q1 = userEmail
+        ? "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.user_email = ?"
+        : "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.user_email IS NULL";
+      const q2 = userEmail
+        ? "SELECT p.perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE m.user_email = ?"
+        : "SELECT p.perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE m.user_email IS NULL";
+      rows = [
+        ...(userEmail ? db.db.prepare(q1).all(userEmail) : db.db.prepare(q1).all()),
+        ...(userEmail ? db.db.prepare(q2).all(userEmail) : db.db.prepare(q2).all())
+      ];
+    } else if (scope === "own") {
+      const query = userEmail
+        ? "SELECT perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.user_email = ?"
+        : "SELECT perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.user_email IS NULL";
+      rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+    } else if (scope === "killer") {
+      const query = userEmail
+        ? "SELECT perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id WHERE m.user_email = ?"
+        : "SELECT perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id WHERE m.user_email IS NULL";
+      rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+    } else {
+      const query = userEmail
+        ? "SELECT perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE m.user_email = ?"
+        : "SELECT perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE m.user_email IS NULL";
+      rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+    }
   } else {
-    rows = db.prepare("SELECT perks_json FROM participants").all();
+    if (scope === "own-survivor") {
+      let query = db.client.from("loadouts").select("perks_json, matches!inner(role, user_email)").eq("matches.role", "survivor");
+      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      const { data } = check(await query);
+      rows = data || [];
+    } else if (scope === "own-killer") {
+      let query = db.client.from("loadouts").select("perks_json, matches!inner(role, user_email)").eq("matches.role", "killer");
+      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      const { data } = check(await query);
+      rows = data || [];
+    } else if (scope === "others-survivor") {
+      let query = db.client.from("participants").select("perks_json, matches!inner(user_email)").eq("role", "survivor");
+      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      const { data } = check(await query);
+      rows = data || [];
+    } else if (scope === "others-killer") {
+      let query = db.client.from("killer_info").select("perks_json, matches!inner(role, user_email)").eq("matches.role", "survivor").not("perks_json", "is", null);
+      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      const { data } = check(await query);
+      rows = data || [];
+    } else if (scope === "all") {
+      let q1 = db.client.from("loadouts").select("perks_json, matches!inner(user_email)");
+      q1 = userEmail ? q1.eq("matches.user_email", userEmail) : q1.is("matches.user_email", null);
+      const { data: lData } = check(await q1);
+
+      let q2 = db.client.from("participants").select("perks_json, matches!inner(user_email)");
+      q2 = userEmail ? q2.eq("matches.user_email", userEmail) : q2.is("matches.user_email", null);
+      const { data: pData } = check(await q2);
+
+      rows = [...(lData || []), ...(pData || [])];
+    } else if (scope === "own") {
+      let query = db.client.from("loadouts").select("perks_json, matches!inner(user_email)");
+      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      const { data } = check(await query);
+      rows = data || [];
+    } else if (scope === "killer") {
+      let query = db.client.from("killer_info").select("perks_json, matches!inner(user_email)");
+      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      const { data } = check(await query);
+      rows = data || [];
+    } else {
+      let query = db.client.from("participants").select("perks_json, matches!inner(user_email)");
+      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      const { data } = check(await query);
+      rows = data || [];
+    }
   }
   const counts = new Map();
   rows.forEach(row => new Set(parse(row.perks_json)).forEach(perk => counts.set(perk, (counts.get(perk) ?? 0) + 1)));
   return [...counts].map(([perk, count]) => ({ perk, image: images.get(perk), count, pct: percentage(count, rows.length) })).sort((a, b) => b.count - a.count);
 }
 
-export function trends(db) {
-  const rows = db.prepare("SELECT substr(played_at,1,10) date, COUNT(*) matches FROM matches GROUP BY date ORDER BY date").all();
-  return rows;
+export async function trends(db) {
+  const userEmail = db.userEmail ?? null;
+  if (db.type === "sqlite") {
+    const query = userEmail
+      ? "SELECT substr(played_at,1,10) date, COUNT(*) matches FROM matches WHERE user_email = ? GROUP BY date ORDER BY date"
+      : "SELECT substr(played_at,1,10) date, COUNT(*) matches FROM matches WHERE user_email IS NULL GROUP BY date ORDER BY date";
+    return userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
+  } else {
+    let query = db.client.from("matches").select("played_at");
+    if (userEmail) {
+      query = query.eq("user_email", userEmail);
+    } else {
+      query = query.is("user_email", null);
+    }
+    const { data } = check(await query);
+    const counts = {};
+    (data || []).forEach(row => {
+      const date = row.played_at.slice(0, 10);
+      counts[date] = (counts[date] || 0) + 1;
+    });
+    return Object.entries(counts).map(([date, matches]) => ({ date, matches })).sort((a, b) => a.date.localeCompare(b.date));
+  }
 }
 
-export function assetImages(db, type) {
+export async function assetImages(db, type) {
   const types = ["characters","maps","perks","items","addons","offerings"];
   const filter = type && types.includes(type) ? "WHERE type=?" : "";
   const args = filter ? [type] : [];
-  const rows = db.prepare(`SELECT type,name,url FROM assets ${filter}`).all(...args);
+  
+  let rows;
+  if (db.type === "sqlite") {
+    rows = db.db.prepare(`SELECT type,name,url FROM assets ${filter}`).all(...args);
+  } else {
+    let query = db.client.from("assets").select("type,name,url");
+    if (type && types.includes(type)) {
+      query = query.eq("type", type);
+    }
+    const { data } = check(await query);
+    rows = data || [];
+  }
+
   const result = {};
   for (const row of rows) {
     if (!result[row.type]) result[row.type] = {};
     result[row.type][row.name] = row.url;
   }
   return result;
+}
+
+export async function getBackfillSnapshots(db) {
+  const userEmail = db.userEmail ?? null;
+  if (db.type === "sqlite") {
+    const query = userEmail
+      ? `SELECT source_url,raw_json FROM source_snapshots
+         WHERE (source_url LIKE '%/player-stats/games/dbd/providers/%'
+            OR source_url LIKE '%/player-stats/match-history/games/dbd/providers/%')
+           AND user_email = ?
+         ORDER BY captured_at DESC LIMIT 10`
+      : `SELECT source_url,raw_json FROM source_snapshots
+         WHERE (source_url LIKE '%/player-stats/games/dbd/providers/%'
+            OR source_url LIKE '%/player-stats/match-history/games/dbd/providers/%')
+           AND user_email IS NULL
+         ORDER BY captured_at DESC LIMIT 10`;
+    const stmt = db.db.prepare(query);
+    return (userEmail ? stmt.all(userEmail) : stmt.all()).map(row => ({
+      source_url: row.source_url,
+      raw_json: parse(row.raw_json)
+    }));
+  } else {
+    let query = db.client
+      .from("source_snapshots")
+      .select("source_url, raw_json")
+      .or("source_url.ilike.%/player-stats/games/dbd/providers/%,source_url.ilike.%/player-stats/match-history/games/dbd/providers/%");
+    
+    if (userEmail) {
+      query = query.eq("user_email", userEmail);
+    } else {
+      query = query.is("user_email", null);
+    }
+    
+    const { data } = check(await query.order("captured_at", { ascending: false }).limit(10));
+    
+    return (data || []).map(row => ({
+      source_url: row.source_url,
+      raw_json: parse(row.raw_json)
+    }));
+  }
 }

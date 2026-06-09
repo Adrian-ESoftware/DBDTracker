@@ -1,5 +1,69 @@
-import { BrowserWindow } from "electron";
-import { ingestMatches, ingestOfficialMetrics, ingestOfficialSections, ingestSnapshots, ingestTopCharacter } from "./database.js";
+import { BrowserWindow, session, app } from "electron";
+import { join } from "node:path";
+import { writeFileSync, readFileSync } from "node:fs";
+import { ingestMatches, ingestOfficialMetrics, ingestOfficialSections, ingestSnapshots, ingestTopCharacter, getBackfillSnapshots } from "./database.js";
+
+async function fetchUserEmail(instance) {
+  try {
+    const email = await instance.webContents.executeJavaScript(`
+      Promise.race([
+        fetch("https://account-backend.bhvr.com/players/me", { credentials: "include" })
+          .then(r => r.json())
+          .then(data => data.email || null)
+          .catch(() => null),
+        new Promise(resolve => setTimeout(() => resolve(null), 5000))
+      ])
+    `);
+    if (email) return email;
+  } catch (e) {
+    console.error("[Collector] CORS or execution error fetching email from page context:", e);
+  }
+
+  // Fallback: Fetch directly from Node.js using session cookies
+  try {
+    const cookies = await instance.webContents.session.cookies.get({});
+    const cookieString = cookies
+      .filter(c => c.domain.includes("bhvr.com") || c.domain.includes("deadbydaylight.com"))
+      .map(c => `${c.name}=${c.value}`)
+      .join("; ");
+    if (cookieString) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      try {
+        const response = await fetch("https://account-backend.bhvr.com/players/me", {
+          headers: { "Cookie": cookieString },
+          signal: controller.signal
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.email) {
+            return data.email;
+          }
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+  } catch (e) {
+    console.error("[Collector] Fallback cookie fetch error:", e);
+  }
+  return null;
+}
+
+function saveUserEmail(email) {
+  try {
+    const configPath = join(app.getPath("userData"), "config.json");
+    let config = {};
+    try {
+      config = JSON.parse(readFileSync(configPath, "utf-8"));
+    } catch {}
+    config.userEmail = email;
+    writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+  } catch (error) {
+    console.error("[Collector] Erro ao salvar config.json:", error);
+  }
+}
+
 
 const STATISTICS_URL = "https://stats.deadbydaylight.com/statistics/";
 const HISTORY_URL = "https://stats.deadbydaylight.com/match-history/";
@@ -228,17 +292,23 @@ export function createBackgroundCollector(db, onStatus) {
   };
   const state = { message: "Iniciando coletor...", loggedIn, collecting, lastRun };
 
-  function processPayload(url, payload) {
+  async function processPayload(url, payload) {
+    if (/\/players\/me$/i.test(url) && payload?.email) {
+      const email = payload.email;
+      db.userEmail = email;
+      saveUserEmail(email);
+      console.log(`[Collector] E-mail do usuário obtido por interceptação de rede: ${email}`);
+    }
     const matches = findMatches(payload);
-    if (matches.length) ingestMatches(db, matches);
+    if (matches.length) await ingestMatches(db, matches);
     if (/\/player-stats\/games\/dbd\/providers\//i.test(url) && payload?.data) {
-      ingestOfficialSections(db, {
+      await ingestOfficialSections(db, {
         data: payload.data,
         section: /matchCategory=Regular/i.test(url) ? "regular-trials" : "overview",
         captured_at: new Date().toISOString()
       });
     }
-    ingestSnapshots(db, [{
+    await ingestSnapshots(db, [{
       source_url: url,
       kind: matches.length ? "match-history" : /player-stats\/games/i.test(url) ? "regular-trials" : "statistics",
       captured_at: new Date().toISOString(),
@@ -247,14 +317,13 @@ export function createBackgroundCollector(db, onStatus) {
     return matches.length;
   }
 
-  function backfillSnapshots() {
-    const rows = db.prepare(`SELECT source_url,raw_json FROM source_snapshots
-      WHERE source_url LIKE '%/player-stats/games/dbd/providers/%'
-         OR source_url LIKE '%/player-stats/match-history/games/dbd/providers/%'
-      ORDER BY captured_at DESC LIMIT 10`).all();
-    for (const row of rows) {
-      try { processPayload(row.source_url, JSON.parse(row.raw_json)); } catch {}
-    }
+  async function backfillSnapshots() {
+    try {
+      const rows = await getBackfillSnapshots(db);
+      for (const row of rows) {
+        try { await processPayload(row.source_url, row.raw_json); } catch {}
+      }
+    } catch {}
   }
 
   function ensureBrowser() {
@@ -263,36 +332,83 @@ export function createBackgroundCollector(db, onStatus) {
       width: 1180, height: 820, show: false, title: "DBD Tracker - Login oficial",
       webPreferences: { partition: "persist:dbd-official", contextIsolation: true }
     });
+
     browser.on("close", event => {
       if (!browser.forceClose) { event.preventDefault(); browser.hide(); }
     });
     browser.webContents.debugger.attach("1.3");
     browser.webContents.debugger.sendCommand("Network.enable");
     browser.webContents.debugger.on("message", async (_, method, params) => {
-      if (method !== "Network.responseReceived" || params.type !== "XHR" && params.type !== "Fetch") return;
-      const type = params.response.mimeType ?? "";
-      if (!type.includes("json") && !/match|stat|history|player/i.test(params.response.url)) return;
-      pendingResponses.set(params.requestId, params.response.url);
-      setTimeout(async () => {
+      if (method === "Network.responseReceived") {
+        if (params.type !== "XHR" && params.type !== "Fetch") return;
+        const type = params.response.mimeType ?? "";
+        if (!type.includes("json") && !/match|stat|history|player/i.test(params.response.url)) return;
+        pendingResponses.set(params.requestId, params.response.url);
+      } else if (method === "Network.loadingFinished") {
         const url = pendingResponses.get(params.requestId);
         if (!url) return;
         pendingResponses.delete(params.requestId);
         try {
           const result = await browser.webContents.debugger.sendCommand("Network.getResponseBody", { requestId: params.requestId });
-          const payload = JSON.parse(result.body);
-          processPayload(url, payload);
-        } catch {}
-      }, 400);
+          const bodyText = (result.body || "").trim();
+          if (!bodyText || bodyText.startsWith("<") || bodyText.startsWith("<!")) return;
+          const payload = JSON.parse(bodyText);
+          await processPayload(url, payload);
+        } catch (error) {
+          // Suppress parsing/debugger noise for unrelated network requests
+          if (error instanceof SyntaxError || error.message?.includes("No resource") || error.message?.includes("No data")) {
+            return;
+          }
+          console.error("Erro no processamento do payload:", error);
+        }
+      } else if (method === "Network.loadingFailed") {
+        pendingResponses.delete(params.requestId);
+      }
     });
     return browser;
   }
 
-  async function load(url) {
-    const instance = ensureBrowser();
-    await instance.loadURL(url);
-    await new Promise(resolve => setTimeout(resolve, 3000));
+  async function checkLoginState(instance) {
+    const maxAttempts = 10;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const currentUrl = instance.webContents.getURL() || "";
+      if (currentUrl && currentUrl !== "about:blank" && !currentUrl.includes("stats.deadbydaylight.com")) {
+        return false;
+      }
+      const body = await instance.webContents.executeJavaScript("document.body.innerText");
+      const hasStatsContent = /overview|trials|partidas|recent|historico|estatisticas|escapes|killer|survivor/i.test(body);
+      const hasLoginPrompt = /\b(sign in|join now|log in|entrar|conectar)\b/i.test(body);
+      if (hasStatsContent && !hasLoginPrompt) {
+        return true;
+      }
+      if (hasLoginPrompt && body.length > 100) {
+        return false;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    const currentUrl = instance.webContents.getURL() || "";
     const body = await instance.webContents.executeJavaScript("document.body.innerText");
-    loggedIn = !/sign in|join now|log in|entrar|conectar/i.test(body);
+    const isStatsPage = currentUrl.includes("stats.deadbydaylight.com");
+    const hasLoginPrompt = /\b(sign in|join now|log in|entrar|conectar)\b/i.test(body);
+    return isStatsPage && !hasLoginPrompt;
+  }
+
+  async function load(url, checkLogin = false) {
+    const instance = ensureBrowser();
+    try {
+      await Promise.race([
+        instance.loadURL(url),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout loading URL: " + url)), 20000))
+      ]);
+    } catch (err) {
+      console.warn("[Collector] Warning during loadURL:", err.message);
+    }
+    if (checkLogin) {
+      loggedIn = await checkLoginState(instance);
+      console.log(`[Collector] Verificação de login: ${loggedIn ? "Conectado" : "Desconectado"}`);
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
     return instance;
   }
 
@@ -301,20 +417,29 @@ export function createBackgroundCollector(db, onStatus) {
     collecting = true;
     status("Atualizando dados em segundo plano...");
     try {
-      const statistics = await load(STATISTICS_URL);
+      const statistics = await load(STATISTICS_URL, true);
       if (!loggedIn) {
         status("Sessao expirada. Abra o login uma vez.");
         return state;
       }
+
+      // Obter o e-mail do usuário no contexto da página já carregada
+      const email = await fetchUserEmail(statistics);
+      if (email) {
+        db.userEmail = email;
+        saveUserEmail(email);
+        console.log(`[Collector] E-mail do usuário ativo obtido após carregamento: ${email}`);
+      }
+
       const result = await statistics.webContents.executeJavaScript(metricsScript);
-      ingestOfficialMetrics(db, { source_url: STATISTICS_URL, captured_at: new Date().toISOString(), metrics: result.metrics });
-      ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-dom", captured_at: new Date().toISOString(), raw: result }]);
+      await ingestOfficialMetrics(db, { source_url: STATISTICS_URL, captured_at: new Date().toISOString(), metrics: result.metrics });
+      await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-dom", captured_at: new Date().toISOString(), raw: result }]);
       const regularTrials = await statistics.webContents.executeJavaScript(`(async () => {
         const target = [...document.querySelectorAll("button,a,[role=tab]")].find(node => /regular trials/i.test(node.textContent || ""));
         if (target) { target.click(); await new Promise(resolve => setTimeout(resolve, 1800)); }
         return (${metricsScript});
       })()`);
-      ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-regular-trials-dom", captured_at: new Date().toISOString(), raw: regularTrials }]);
+      await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-regular-trials-dom", captured_at: new Date().toISOString(), raw: regularTrials }]);
       for (const roleName of ["Survivor", "Killer"]) {
         const detail = await statistics.webContents.executeJavaScript(`(async () => {
           const target = [...document.querySelectorAll("button,a,[role=tab]")].find(node => (node.textContent || "").trim().toLowerCase() === ${JSON.stringify(roleName.toLowerCase())});
@@ -322,17 +447,17 @@ export function createBackgroundCollector(db, onStatus) {
           return (${characterDetailScript});
         })()`);
         if (detail.character) {
-          ingestTopCharacter(db, {
+          await ingestTopCharacter(db, {
             section: "regular-trials", period: "all-time", role: roleName.toLowerCase(),
             character: detail.character, captured_at: new Date().toISOString(), values: detail.values
           });
         }
-        ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: `statistics-regular-trials-${roleName.toLowerCase()}-dom`, captured_at: new Date().toISOString(), raw: detail }]);
+        await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: `statistics-regular-trials-${roleName.toLowerCase()}-dom`, captured_at: new Date().toISOString(), raw: detail }]);
       }
       const historyUrl = await statistics.webContents.executeJavaScript(
         `[...document.links].map(link => link.href).find(href => /match.*history|history.*match/i.test(href)) || ${JSON.stringify(HISTORY_URL)}`
       );
-      await load(historyUrl);
+      await load(historyUrl, false);
       lastRun = new Date().toISOString();
       status("Dados atualizados automaticamente.");
     } catch (error) {
@@ -357,6 +482,18 @@ export function createBackgroundCollector(db, onStatus) {
     return collect();
   }
 
+  async function clearLogin() {
+    loggedIn = false;
+    db.userEmail = null;
+    saveUserEmail(null);
+    status("Login limpo. Faca login novamente.");
+    if (browser && !browser.isDestroyed()) {
+      await browser.webContents.session.clearStorageData();
+    } else {
+      await session.fromPartition("persist:dbd-official").clearStorageData();
+    }
+  }
+
   function start() {
     clearInterval(timer);
     backfillSnapshots();
@@ -372,5 +509,5 @@ export function createBackgroundCollector(db, onStatus) {
     }
   }
 
-  return { start, stop, collect, showLogin, finishLogin, getState: () => state };
+  return { start, stop, collect, showLogin, finishLogin, clearLogin, getState: () => state };
 }

@@ -20,11 +20,22 @@
     "productName": "DBD Tracker Overlay",
     "artifactName": "DBD-Tracker-Overlay-${version}.${ext}",
     "forceCodeSigning": false,
-    "files": ["main.js", "preload.cjs", "database.js", "server.js", "background-collector.js", "overlay.html", "tray_icons"],
+    "files": [
+      "main.js",
+      "preload.cjs",
+      "database.js",
+      "server.js",
+      "background-collector.js",
+      "overlay.html",
+      "tray_icons"
+    ],
     "win": {
       "target": "portable",
       "icon": "tray_icons/Icon.png"
     }
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.108.0",
+    "dotenv": "^17.4.2"
   }
 }
-

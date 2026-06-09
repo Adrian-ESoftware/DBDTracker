@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("dbd", {
   showLogin: () => ipcRenderer.invoke("show-login"),
   finishLogin: () => ipcRenderer.invoke("finish-login"),
   collectNow: () => ipcRenderer.invoke("collect-now"),
+  clearLogin: () => ipcRenderer.invoke("clear-login"),
   collectorStatus: () => ipcRenderer.invoke("collector-status"),
   onStatus: callback => ipcRenderer.on("collector-status", (_, value) => callback(value))
 });

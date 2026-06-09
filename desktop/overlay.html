@@ -154,6 +154,7 @@ h2:first-child{margin-top:2px}
         <button id="login">Fazer login</button>
         <button id="finishLogin">Concluir login</button>
         <button id="collectNow">Atualizar agora</button>
+        <button id="clearLogin" style="background:#d93838">Limpar Login</button>
       </div>
     </div>
 
@@ -489,6 +490,7 @@ $('size').onclick = window.dbd.toggleSize;
 $('login').onclick = function() { window.dbd.showLogin(); };
 $('finishLogin').onclick = function() { window.dbd.finishLogin(); };
 $('collectNow').onclick = function() { window.dbd.collectNow(); };
+$('clearLogin').onclick = function() { window.dbd.clearLogin(); };
 window.dbd.onStatus(status);
 window.dbd.collectorStatus().then(status);
 load();
