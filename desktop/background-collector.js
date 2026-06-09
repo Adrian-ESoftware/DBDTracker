@@ -481,6 +481,10 @@ export function createBackgroundCollector(db, onStatus) {
 
   async function collect() {
     if (collecting) return state;
+    if (browser && !browser.isDestroyed() && browser.isVisible()) {
+      console.log("[Collector] Coleta automática suspensa enquanto a janela de login está aberta.");
+      return state;
+    }
     collecting = true;
     status("Atualizando dados em segundo plano...");
     try {
@@ -562,6 +566,9 @@ export function createBackgroundCollector(db, onStatus) {
   function scheduleBrowserRelease() {
     clearTimeout(releaseTimer);
     releaseTimer = setTimeout(async () => {
+      if (browser && !browser.isDestroyed() && browser.isVisible()) {
+        return; // Não fecha se o usuário estiver visualizando a janela de login
+      }
       if (!collecting && browser && !browser.isDestroyed()) {
         // Garante que os cookies de sessão sejam salvos em disco antes de destruir
         try {
