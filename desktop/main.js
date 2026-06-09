@@ -1,6 +1,15 @@
-import "dotenv/config";
-import { app, BrowserWindow, globalShortcut, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
+import { config } from "dotenv";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
+
+// Carrega .env do diretório da aplicação (funciona tanto em dev quanto no exe empacotado)
+const envPath = join(import.meta.dirname, ".env");
+if (existsSync(envPath)) {
+  config({ path: envPath });
+} else {
+  config(); // fallback padrão
+}
+import { app, BrowserWindow, globalShortcut, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
 import { readFileSync } from "node:fs";
 import { openDatabase } from "./database.js";
 import { startServer } from "./server.js";
@@ -11,9 +20,22 @@ app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("disable-gpu");
 app.commandLine.appendSwitch("disable-gpu-compositing");
 app.commandLine.appendSwitch("disable-software-rasterizer");
-app.commandLine.appendSwitch("js-flags", "--max-old-space-size=128");
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=64 --lite-mode");
 app.commandLine.appendSwitch("disable-site-isolation-trials");
-app.commandLine.appendSwitch("disable-features", "SpareRendererForSitePerProcess");
+app.commandLine.appendSwitch("disable-features", "SpareRendererForSitePerProcess,TranslateUI,BlinkGenPropertyTrees");
+// Reduz processos auxiliares e networking em background
+app.commandLine.appendSwitch("renderer-process-limit", "1");
+app.commandLine.appendSwitch("disable-background-networking");
+app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
+app.commandLine.appendSwitch("disable-component-update");
+app.commandLine.appendSwitch("disable-sync");
+app.commandLine.appendSwitch("disable-translate");
+app.commandLine.appendSwitch("disable-extensions");
+app.commandLine.appendSwitch("disable-default-apps");
+app.commandLine.appendSwitch("no-first-run");
+app.commandLine.appendSwitch("disable-breakpad");
+app.commandLine.appendSwitch("disable-domain-reliability");
 
 // Garante instancia unica: se ja existe uma rodando, foca ela e encerra esta
 const gotLock = app.requestSingleInstanceLock();
@@ -47,7 +69,9 @@ app.on("browser-window-created", (event, newWindow) => {
         autoHideMenuBar: true,
         webPreferences: {
           partition: "persist:dbd-official",
-          contextIsolation: true
+          contextIsolation: true,
+          spellcheck: false,
+          enableWebSQL: false
         }
       }
     };
@@ -68,7 +92,13 @@ function createWindow() {
     frame: false, transparent: true, alwaysOnTop: true, resizable: true,
     skipTaskbar: false, show: false, backgroundColor: "#00000000",
     icon: join(import.meta.dirname, "tray_icons", "Icon.png"),
-    webPreferences: { preload: join(import.meta.dirname, "preload.cjs"), contextIsolation: true }
+    webPreferences: {
+      preload: join(import.meta.dirname, "preload.cjs"),
+      contextIsolation: true,
+      spellcheck: false,
+      enableWebSQL: false,
+      v8CacheOptions: "none"
+    }
   });
   window.setAlwaysOnTop(true, "screen-saver");
   window.loadFile(join(import.meta.dirname, "overlay.html"));
@@ -105,6 +135,7 @@ app.whenReady().then(() => {
   app.commandLine.appendSwitch("gpu-disk-cache-dir", join(app.getPath("userData"), "gpu-cache"));
 
   const db = openDatabase(join(app.getPath("userData"), "dbd_tracker.sqlite3"));
+  console.log(`[Main] Banco de dados: ${db.type} | SUPABASE_URL: ${process.env.SUPABASE_URL ? "configurado" : "NÃO ENCONTRADO"}`);
 
   // Carrega o e-mail do último usuário ativo do config.json
   try {

@@ -333,15 +333,22 @@ export function createBackgroundCollector(db, onStatus) {
     if (browser && !browser.isDestroyed()) return browser;
     browser = new BrowserWindow({
       width: 1180, height: 820, show: false, title: "DBD Tracker - Login oficial",
-      webPreferences: { partition: "persist:dbd-official", contextIsolation: true }
+      webPreferences: {
+        partition: "persist:dbd-official",
+        contextIsolation: true,
+        spellcheck: false,
+        enableWebSQL: false,
+        webgl: false
+      }
     });
 
-    browser.on("close", event => {
-      if (!browser.forceClose) { event.preventDefault(); browser.hide(); }
+    const win = browser;
+    win.on("close", event => {
+      if (!win.forceClose) { event.preventDefault(); win.hide(); }
     });
-    browser.webContents.debugger.attach("1.3");
-    browser.webContents.debugger.sendCommand("Network.enable");
-    browser.webContents.debugger.on("message", async (_, method, params) => {
+    win.webContents.debugger.attach("1.3");
+    win.webContents.debugger.sendCommand("Network.enable");
+    win.webContents.debugger.on("message", async (_, method, params) => {
       if (method === "Network.responseReceived") {
         if (params.type !== "XHR" && params.type !== "Fetch") return;
         const type = params.response.mimeType ?? "";
@@ -352,7 +359,8 @@ export function createBackgroundCollector(db, onStatus) {
         if (!url) return;
         pendingResponses.delete(params.requestId);
         try {
-          const result = await browser.webContents.debugger.sendCommand("Network.getResponseBody", { requestId: params.requestId });
+          if (win.isDestroyed()) return;
+          const result = await win.webContents.debugger.sendCommand("Network.getResponseBody", { requestId: params.requestId });
           const bodyText = (result.body || "").trim();
           if (!bodyText || bodyText.startsWith("<") || bodyText.startsWith("<!")) return;
           const payload = JSON.parse(bodyText);
@@ -475,18 +483,23 @@ export function createBackgroundCollector(db, onStatus) {
 
   function scheduleBrowserRelease() {
     clearTimeout(releaseTimer);
-    releaseTimer = setTimeout(() => {
+    releaseTimer = setTimeout(async () => {
       if (!collecting && browser && !browser.isDestroyed()) {
+        // Garante que os cookies de sessão sejam salvos em disco antes de destruir
+        try {
+          await browser.webContents.session.cookies.flushStore();
+        } catch {}
         console.log("[Collector] Liberando browser oculto para economizar memória.");
         browser.forceClose = true;
         browser.close();
         browser = null;
         pendingResponses.clear();
       }
-    }, 120_000); // 2 minutos após a coleta
+    }, 30_000); // 30 segundos após a coleta
   }
 
   async function showLogin() {
+    clearTimeout(releaseTimer); // Não destruir o browser enquanto o usuário faz login
     const instance = ensureBrowser();
     instance.show();
     instance.focus();
@@ -495,7 +508,8 @@ export function createBackgroundCollector(db, onStatus) {
   }
 
   async function finishLogin() {
-    ensureBrowser().hide();
+    const b = ensureBrowser();
+    b.hide();
     return collect();
   }
 

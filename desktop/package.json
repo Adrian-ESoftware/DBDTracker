@@ -27,7 +27,8 @@
       "server.js",
       "background-collector.js",
       "overlay.html",
-      "tray_icons"
+      "tray_icons",
+      ".env"
     ],
     "win": {
       "target": "portable",
