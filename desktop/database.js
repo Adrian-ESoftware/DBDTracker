@@ -32,6 +32,89 @@ function indexAssets(db, value) {
   visit(value);
 }
 
+function isMoreOrEquallyComplete(incoming, existing) {
+  if (!existing) return true;
+
+  let incomingScore = 0;
+  if (incoming.map && incoming.map !== "?") incomingScore++;
+  if (incoming.duration_sec && incoming.duration_sec > 0) incomingScore++;
+  if (incoming.score && incoming.score > 0) incomingScore++;
+  if (incoming.killer_info) incomingScore++;
+  if (incoming.participants && incoming.participants.length > 1) incomingScore += 2;
+
+  let existingScore = 0;
+  if (existing.map && existing.map !== "?") existingScore++;
+  if (existing.duration_sec && existing.duration_sec > 0) existingScore++;
+  if (existing.score && existing.score > 0) existingScore++;
+  
+  const existingHasKiller = existing.killer_info || existing.has_killer_info;
+  if (existingHasKiller) existingScore++;
+  
+  const existingPartCount = Array.isArray(existing.participants) ? existing.participants.length : (existing.participants_count || 0);
+  if (existingPartCount > 1) existingScore += 2;
+
+  return incomingScore >= existingScore;
+}
+
+export function cleanupDuplicates(db) {
+  const duplicates = db.prepare(`
+    SELECT played_at, role, COUNT(*) as c
+    FROM matches
+    GROUP BY played_at, role
+    HAVING c > 1
+  `).all();
+
+  if (duplicates.length === 0) return;
+
+  db.exec("BEGIN");
+  try {
+    for (const dup of duplicates) {
+      const rows = db.prepare(`
+        SELECT id, map, duration_sec, score
+        FROM matches
+        WHERE played_at = ? AND role = ?
+      `).all(dup.played_at, dup.role);
+
+      const matchesWithInfo = rows.map(row => {
+        const pCount = db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id = ?").get(row.id)?.c || 0;
+        const hasKiller = db.prepare("SELECT 1 FROM killer_info WHERE match_id = ?").get(row.id) ? 1 : 0;
+        return {
+          ...row,
+          participants_count: pCount,
+          has_killer_info: hasKiller
+        };
+      });
+
+      matchesWithInfo.sort((a, b) => {
+        let scoreA = 0;
+        if (a.map && a.map !== "?") scoreA++;
+        if (a.duration_sec && a.duration_sec > 0) scoreA++;
+        if (a.score && a.score > 0) scoreA++;
+        if (a.has_killer_info) scoreA++;
+        if (a.participants_count > 1) scoreA += 2;
+
+        let scoreB = 0;
+        if (b.map && b.map !== "?") scoreB++;
+        if (b.duration_sec && b.duration_sec > 0) scoreB++;
+        if (b.score && b.score > 0) scoreB++;
+        if (b.has_killer_info) scoreB++;
+        if (b.participants_count > 1) scoreB += 2;
+
+        return scoreB - scoreA;
+      });
+
+      const deleteStmt = db.prepare("DELETE FROM matches WHERE id = ?");
+      for (let i = 1; i < matchesWithInfo.length; i++) {
+        deleteStmt.run(matchesWithInfo[i].id);
+      }
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    console.error("Failed to clean up duplicates:", error);
+  }
+}
+
 export function openDatabase(path) {
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
@@ -78,6 +161,7 @@ export function openDatabase(path) {
       PRIMARY KEY (type, name)
     );
   `);
+  cleanupDuplicates(db);
   return db;
 }
 
@@ -103,8 +187,27 @@ export function ingestMatches(db, matches) {
   db.exec("BEGIN");
   try {
     for (const match of matches) {
-      const id = idFor(match);
-      db.prepare("SELECT id FROM matches WHERE id=?").get(id) ? updated++ : inserted++;
+      if (!match.played_at || !match.role) continue;
+
+      const existing = db.prepare("SELECT id, map, duration_sec, score FROM matches WHERE played_at = ? AND role = ?").get(match.played_at, match.role);
+
+      let id;
+      if (existing) {
+        const pCount = db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id = ?").get(existing.id)?.c || 0;
+        const hasKiller = db.prepare("SELECT 1 FROM killer_info WHERE match_id = ?").get(existing.id) ? 1 : 0;
+        existing.participants_count = pCount;
+        existing.has_killer_info = hasKiller;
+
+        if (!isMoreOrEquallyComplete(match, existing)) {
+          continue;
+        }
+        id = existing.id;
+        updated++;
+      } else {
+        id = idFor(match);
+        inserted++;
+      }
+
       upsert.run(id, match.source_id ?? null, match.played_at, match.role, match.character ?? null, match.map ?? null,
         match.map_realm ?? null, match.duration_sec ?? null, match.result ?? null, match.score ?? null,
         match.raw == null ? null : JSON.stringify(match.raw), new Date().toISOString());

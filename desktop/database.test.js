@@ -42,3 +42,56 @@ test("grava partidas e calcula métricas no SQLite", () => {
   ingestTopCharacter(db, { section: "regular-trials", period: "all-time", role: "survivor", character: "Kate Denson", captured_at: "2026-06-08T12:00:00Z", values: { "Matches played": "95" } });
   assert.equal(topCharacters(db)[0].character, "Kate Denson");
 });
+
+test("limpa duplicatas e evita ingestão de dados incompletos", () => {
+  const db = openDatabase(":memory:");
+
+  // Ingest complete match
+  ingestMatches(db, [{
+    source_id: "id-complete", played_at: "2026-06-08T18:13:00Z", role: "survivor", character: "Kate",
+    map: "Mother's Dwelling", result: "escaped", score: 19773,
+    loadout: { perks: ["Sprint Burst"] },
+    killer_info: { killer: "The Knight", kills_count: 3 },
+    participants: [{ character: "Lee Yun-jin", role: "survivor", result: "dead", score: 18646 }]
+  }]);
+
+  // Ingest incomplete duplicate (same played_at and role)
+  ingestMatches(db, [{
+    source_id: "id-incomplete", played_at: "2026-06-08T18:13:00Z", role: "survivor", character: "Kate",
+    map: null, result: "escaped", score: 19773,
+    loadout: { perks: ["Sprint Burst"] },
+    participants: [{ character: "Lee Yun-jin", role: "survivor", result: "dead", score: 18646 }]
+  }]);
+
+  const list = matches(db);
+  // Should only have 1 match
+  assert.equal(list.length, 1);
+  // It must be the complete one (has map name)
+  assert.equal(list[0].map, "Mother's Dwelling");
+  // Killer info must be preserved
+  assert.ok(list[0].killer_info);
+  assert.equal(list[0].killer_info.killer, "The Knight");
+
+  // Now let's try the reverse order: insert incomplete first, then complete
+  const db2 = openDatabase(":memory:");
+  ingestMatches(db2, [{
+    source_id: "id-incomplete", played_at: "2026-06-08T18:13:00Z", role: "survivor", character: "Kate",
+    map: null, result: "escaped", score: 19773,
+    loadout: { perks: ["Sprint Burst"] },
+    participants: [{ character: "Lee Yun-jin", role: "survivor", result: "dead", score: 18646 }]
+  }]);
+
+  ingestMatches(db2, [{
+    source_id: "id-complete", played_at: "2026-06-08T18:13:00Z", role: "survivor", character: "Kate",
+    map: "Mother's Dwelling", result: "escaped", score: 19773,
+    loadout: { perks: ["Sprint Burst"] },
+    killer_info: { killer: "The Knight", kills_count: 3 },
+    participants: [{ character: "Lee Yun-jin", role: "survivor", result: "dead", score: 18646 }]
+  }]);
+
+  const list2 = matches(db2);
+  assert.equal(list2.length, 1);
+  // Should have been upgraded to the complete one
+  assert.equal(list2[0].map, "Mother's Dwelling");
+  assert.ok(list2[0].killer_info);
+});

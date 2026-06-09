@@ -69,7 +69,7 @@ function normalizeOfficialMatch(source) {
   const survivors = playerRole === "killer" ? source.opponentStat : [player, ...source.opponentStat.filter(item => role(item.playerRole) === "survivor")];
   const kills = survivors.filter(item => /SACRIFICED|KILLED|MORI|DEAD/i.test(text(item.playerStatus) ?? "")).length;
   return {
-    source_id: `${source.matchStat.matchStartTime}|${source.matchStat.mapName}|${text(player.characterName)}`,
+    source_id: `official-${source.matchStat.matchStartTime}`,
     played_at: date(source.matchStat.matchStartTime),
     role: playerRole,
     character: text(player.characterName),
@@ -124,6 +124,30 @@ function normalizeMatch(value) {
   };
 }
 
+function isMoreOrEquallyComplete(incoming, existing) {
+  if (!existing) return true;
+
+  let incomingScore = 0;
+  if (incoming.map && incoming.map !== "?") incomingScore++;
+  if (incoming.duration_sec && incoming.duration_sec > 0) incomingScore++;
+  if (incoming.score && incoming.score > 0) incomingScore++;
+  if (incoming.killer_info) incomingScore++;
+  if (incoming.participants && incoming.participants.length > 1) incomingScore += 2;
+
+  let existingScore = 0;
+  if (existing.map && existing.map !== "?") existingScore++;
+  if (existing.duration_sec && existing.duration_sec > 0) existingScore++;
+  if (existing.score && existing.score > 0) existingScore++;
+  
+  const existingHasKiller = existing.killer_info || existing.has_killer_info;
+  if (existingHasKiller) existingScore++;
+  
+  const existingPartCount = Array.isArray(existing.participants) ? existing.participants.length : (existing.participants_count || 0);
+  if (existingPartCount > 1) existingScore += 2;
+
+  return incomingScore >= existingScore;
+}
+
 function findMatches(payload) {
   const found = [];
   const visited = new Set();
@@ -136,7 +160,17 @@ function findMatches(payload) {
     else if (object(value)) Object.values(value).forEach(item => walk(item, depth + 1));
   };
   walk(payload);
-  return [...new Map(found.map(match => [`${match.source_id}|${match.played_at}|${match.character}`, match])).values()];
+
+  const map = new Map();
+  for (const match of found) {
+    if (!match.played_at || !match.role) continue;
+    const key = `${match.played_at}|${match.role}`;
+    const existing = map.get(key);
+    if (!existing || isMoreOrEquallyComplete(match, existing)) {
+      map.set(key, match);
+    }
+  }
+  return [...map.values()];
 }
 
 const metricsScript = `(() => {
