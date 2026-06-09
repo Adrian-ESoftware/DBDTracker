@@ -160,6 +160,13 @@ h2:first-child{margin-top:2px}
 
     <!-- PAGE 2: TRENDS -->
     <div class="page" id="page-trends">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:6px;">
+        <h2 style="margin:0; border:none; padding:0; letter-spacing:.08em">Destaques</h2>
+        <div style="display:flex; gap:4px;">
+          <button id="btn-trends-local" style="background:var(--red); border-color:var(--red); color:#fff; font-size:10px; font-weight:700; padding:2px 8px;">Meus Dados</button>
+          <button id="btn-trends-global" style="font-size:10px; font-weight:700; padding:2px 8px;">Comunidade</button>
+        </div>
+      </div>
       <h2>Perks do Usuário</h2>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
         <div>
@@ -412,18 +419,21 @@ function renderMatches() {
   });
 }
 
+var trendsGlobal = false;
+
 async function load() {
   try {
+    var trendsQuerySuffix = trendsGlobal ? '?global=true' : '';
     var results = await Promise.all([
       get('/stats/overview'),
-      get('/stats/killers'),
-      get('/stats/maps'),
+      get('/stats/killers' + trendsQuerySuffix),
+      get('/stats/maps' + trendsQuerySuffix),
       get('/matches?limit=15'),
       get('/official-sections'),
-      get('/stats/perks?scope=own-survivor'),
-      get('/stats/perks?scope=own-killer'),
-      get('/stats/perks?scope=others-survivor'),
-      get('/stats/perks?scope=others-killer'),
+      get('/stats/perks?scope=own-survivor' + (trendsGlobal ? '&global=true' : '')),
+      get('/stats/perks?scope=own-killer' + (trendsGlobal ? '&global=true' : '')),
+      get('/stats/perks?scope=others-survivor' + (trendsGlobal ? '&global=true' : '')),
+      get('/stats/perks?scope=others-killer' + (trendsGlobal ? '&global=true' : '')),
       get('/top-characters'),
       get('/assets')
     ]);
@@ -491,6 +501,31 @@ $('login').onclick = function() { window.dbd.showLogin(); };
 $('finishLogin').onclick = function() { window.dbd.finishLogin(); };
 $('collectNow').onclick = function() { window.dbd.collectNow(); };
 $('clearLogin').onclick = function() { window.dbd.clearLogin(); };
+
+$('btn-trends-local').onclick = function() {
+  if (!trendsGlobal) return;
+  trendsGlobal = false;
+  $('btn-trends-local').style.background = 'var(--red)';
+  $('btn-trends-local').style.borderColor = 'var(--red)';
+  $('btn-trends-local').style.color = '#fff';
+  $('btn-trends-global').style.background = '';
+  $('btn-trends-global').style.borderColor = '';
+  $('btn-trends-global').style.color = '';
+  load();
+};
+
+$('btn-trends-global').onclick = function() {
+  if (trendsGlobal) return;
+  trendsGlobal = true;
+  $('btn-trends-global').style.background = 'var(--red)';
+  $('btn-trends-global').style.borderColor = 'var(--red)';
+  $('btn-trends-global').style.color = '#fff';
+  $('btn-trends-local').style.background = '';
+  $('btn-trends-local').style.borderColor = '';
+  $('btn-trends-local').style.color = '';
+  load();
+};
+
 window.dbd.onStatus(status);
 window.dbd.collectorStatus().then(status);
 load();

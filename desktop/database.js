@@ -940,8 +940,8 @@ export async function overview(db) {
   };
 }
 
-export async function killers(db) {
-  const userEmail = db.userEmail ?? null;
+export async function killers(db, global = false) {
+  const userEmail = global ? null : (db.userEmail ?? null);
   const images = (await catalog(db)).characters;
   let rows;
   if (db.type === "sqlite") {
@@ -956,7 +956,7 @@ export async function killers(db) {
       SELECT killer_info.killer, killer_info.kills_count, matches.result
       FROM killer_info
       JOIN matches ON matches.id = killer_info.match_id
-      WHERE killer_info.killer IS NOT NULL AND matches.role = 'survivor' AND matches.user_email IS NULL
+      WHERE killer_info.killer IS NOT NULL AND matches.role = 'survivor'
     `;
     rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
   } else {
@@ -967,8 +967,6 @@ export async function killers(db) {
       .not("killer", "is", null);
     if (userEmail) {
       query = query.eq("matches.user_email", userEmail);
-    } else {
-      query = query.is("matches.user_email", null);
     }
     const { data } = check(await query);
     rows = (data || []).map(row => ({
@@ -1009,8 +1007,8 @@ export async function killers(db) {
   }).sort((a, b) => b.count - a.count);
 }
 
-export async function maps(db) {
-  const userEmail = db.userEmail ?? null;
+export async function maps(db, global = false) {
+  const userEmail = global ? null : (db.userEmail ?? null);
   const images = (await catalog(db)).maps;
   let rows;
   if (db.type === "sqlite") {
@@ -1025,7 +1023,7 @@ export async function maps(db) {
       SELECT m.map, m.role, m.result, m.map_realm, k.kills_count, m.id
       FROM matches m
       LEFT JOIN killer_info k ON m.id = k.match_id
-      WHERE m.map IS NOT NULL AND m.user_email IS NULL
+      WHERE m.map IS NOT NULL
     `;
     rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
   } else {
@@ -1035,8 +1033,6 @@ export async function maps(db) {
       .not("map", "is", null);
     if (userEmail) {
       query = query.eq("user_email", userEmail);
-    } else {
-      query = query.is("user_email", null);
     }
     const { data } = check(await query);
     rows = (data || []).map(row => ({
@@ -1113,38 +1109,38 @@ export async function maps(db) {
   }).sort((a, b) => b.count - a.count);
 }
 
-export async function perks(db, scope = "against") {
-  const userEmail = db.userEmail ?? null;
+export async function perks(db, scope = "against", global = false) {
+  const userEmail = global ? null : (db.userEmail ?? null);
   const images = (await catalog(db)).perks;
   let rows = [];
   if (db.type === "sqlite") {
     if (scope === "own-survivor") {
       const query = userEmail
         ? "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='survivor' AND m.user_email = ?"
-        : "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='survivor' AND m.user_email IS NULL";
+        : "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='survivor'";
       rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
     } else if (scope === "own-killer") {
       const query = userEmail
         ? "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='killer' AND m.user_email = ?"
-        : "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='killer' AND m.user_email IS NULL";
+        : "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.role='killer'";
       rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
     } else if (scope === "others-survivor") {
       const query = userEmail
         ? "SELECT p.perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE p.role='survivor' AND m.user_email = ?"
-        : "SELECT p.perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE p.role='survivor' AND m.user_email IS NULL";
+        : "SELECT p.perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE p.role='survivor'";
       rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
     } else if (scope === "others-killer") {
       const query = userEmail
         ? "SELECT k.perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id WHERE m.role='survivor' AND k.perks_json IS NOT NULL AND m.user_email = ?"
-        : "SELECT k.perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id WHERE m.role='survivor' AND k.perks_json IS NOT NULL AND m.user_email IS NULL";
+        : "SELECT k.perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id WHERE m.role='survivor' AND k.perks_json IS NOT NULL";
       rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
     } else if (scope === "all") {
       const q1 = userEmail
         ? "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.user_email = ?"
-        : "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.user_email IS NULL";
+        : "SELECT l.perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id";
       const q2 = userEmail
         ? "SELECT p.perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE m.user_email = ?"
-        : "SELECT p.perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE m.user_email IS NULL";
+        : "SELECT p.perks_json FROM participants p JOIN matches m ON p.match_id=m.id";
       rows = [
         ...(userEmail ? db.db.prepare(q1).all(userEmail) : db.db.prepare(q1).all()),
         ...(userEmail ? db.db.prepare(q2).all(userEmail) : db.db.prepare(q2).all())
@@ -1152,63 +1148,63 @@ export async function perks(db, scope = "against") {
     } else if (scope === "own") {
       const query = userEmail
         ? "SELECT perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.user_email = ?"
-        : "SELECT perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id WHERE m.user_email IS NULL";
+        : "SELECT perks_json FROM loadouts l JOIN matches m ON l.match_id=m.id";
       rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
     } else if (scope === "killer") {
       const query = userEmail
         ? "SELECT perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id WHERE m.user_email = ?"
-        : "SELECT perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id WHERE m.user_email IS NULL";
+        : "SELECT perks_json FROM killer_info k JOIN matches m ON k.match_id=m.id";
       rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
     } else {
       const query = userEmail
         ? "SELECT perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE m.user_email = ?"
-        : "SELECT perks_json FROM participants p JOIN matches m ON p.match_id=m.id WHERE m.user_email IS NULL";
+        : "SELECT perks_json FROM participants p JOIN matches m ON p.match_id=m.id";
       rows = userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
     }
   } else {
     if (scope === "own-survivor") {
       let query = db.client.from("loadouts").select("perks_json, matches!inner(role, user_email)").eq("matches.role", "survivor");
-      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      if (userEmail) query = query.eq("matches.user_email", userEmail);
       const { data } = check(await query);
       rows = data || [];
     } else if (scope === "own-killer") {
       let query = db.client.from("loadouts").select("perks_json, matches!inner(role, user_email)").eq("matches.role", "killer");
-      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      if (userEmail) query = query.eq("matches.user_email", userEmail);
       const { data } = check(await query);
       rows = data || [];
     } else if (scope === "others-survivor") {
       let query = db.client.from("participants").select("perks_json, matches!inner(user_email)").eq("role", "survivor");
-      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      if (userEmail) query = query.eq("matches.user_email", userEmail);
       const { data } = check(await query);
       rows = data || [];
     } else if (scope === "others-killer") {
       let query = db.client.from("killer_info").select("perks_json, matches!inner(role, user_email)").eq("matches.role", "survivor").not("perks_json", "is", null);
-      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      if (userEmail) query = query.eq("matches.user_email", userEmail);
       const { data } = check(await query);
       rows = data || [];
     } else if (scope === "all") {
       let q1 = db.client.from("loadouts").select("perks_json, matches!inner(user_email)");
-      q1 = userEmail ? q1.eq("matches.user_email", userEmail) : q1.is("matches.user_email", null);
+      if (userEmail) q1 = q1.eq("matches.user_email", userEmail);
       const { data: lData } = check(await q1);
 
       let q2 = db.client.from("participants").select("perks_json, matches!inner(user_email)");
-      q2 = userEmail ? q2.eq("matches.user_email", userEmail) : q2.is("matches.user_email", null);
+      if (userEmail) q2 = q2.eq("matches.user_email", userEmail);
       const { data: pData } = check(await q2);
 
       rows = [...(lData || []), ...(pData || [])];
     } else if (scope === "own") {
       let query = db.client.from("loadouts").select("perks_json, matches!inner(user_email)");
-      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      if (userEmail) query = query.eq("matches.user_email", userEmail);
       const { data } = check(await query);
       rows = data || [];
     } else if (scope === "killer") {
       let query = db.client.from("killer_info").select("perks_json, matches!inner(user_email)");
-      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      if (userEmail) query = query.eq("matches.user_email", userEmail);
       const { data } = check(await query);
       rows = data || [];
     } else {
       let query = db.client.from("participants").select("perks_json, matches!inner(user_email)");
-      query = userEmail ? query.eq("matches.user_email", userEmail) : query.is("matches.user_email", null);
+      if (userEmail) query = query.eq("matches.user_email", userEmail);
       const { data } = check(await query);
       rows = data || [];
     }

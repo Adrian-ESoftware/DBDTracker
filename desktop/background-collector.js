@@ -295,9 +295,11 @@ export function createBackgroundCollector(db, onStatus) {
   async function processPayload(url, payload) {
     if (/\/players\/me$/i.test(url) && payload?.email) {
       const email = payload.email;
-      db.userEmail = email;
-      saveUserEmail(email);
-      console.log(`[Collector] E-mail do usuário obtido por interceptação de rede: ${email}`);
+      if (db.userEmail !== email) {
+        db.userEmail = email;
+        saveUserEmail(email);
+        console.log(`[Collector] Novo e-mail do usuário ativo: ${email}`);
+      }
     }
     const matches = findMatches(payload);
     if (matches.length) await ingestMatches(db, matches);

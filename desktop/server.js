@@ -31,9 +31,9 @@ export function startServer(db, port = 8765) {
       if (request.method === "POST" && url.pathname === "/api/official-sections") return reply(response, 200, await ingestOfficialSections(db, await body(request)), origin);
       if (request.method === "POST" && url.pathname === "/api/top-characters") return reply(response, 200, await ingestTopCharacter(db, await body(request)), origin);
       if (url.pathname === "/api/stats/overview") return reply(response, 200, await overview(db), origin);
-      if (url.pathname === "/api/stats/killers") return reply(response, 200, await killers(db), origin);
-      if (url.pathname === "/api/stats/maps") return reply(response, 200, await maps(db), origin);
-      if (url.pathname === "/api/stats/perks") return reply(response, 200, await perks(db, url.searchParams.get("scope") ?? "all"), origin);
+      if (url.pathname === "/api/stats/killers") return reply(response, 200, await killers(db, url.searchParams.get("global") === "true"), origin);
+      if (url.pathname === "/api/stats/maps") return reply(response, 200, await maps(db, url.searchParams.get("global") === "true"), origin);
+      if (url.pathname === "/api/stats/perks") return reply(response, 200, await perks(db, url.searchParams.get("scope") ?? "all", url.searchParams.get("global") === "true"), origin);
       if (url.pathname === "/api/stats/trends") return reply(response, 200, await trends(db), origin);
       if (url.pathname === "/api/assets") return reply(response, 200, await assetImages(db, url.searchParams.get("type") || null), origin);
       if (url.pathname === "/api/matches") return reply(response, 200, await matches(db, Math.min(Number(url.searchParams.get("limit") ?? 100), 500)), origin);
