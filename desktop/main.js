@@ -90,7 +90,7 @@ let mapCheckBuffer = "";
 let mapCheckStatus = { status: "initializing", monitor: null };
 let mapOverlayWindow = null;
 const mapOverlaysPath = join(import.meta.dirname, "map_overlays");
-let userConfig = { overlayCorner: "top-right", overlayOpacity: 70, overlaySize: 350 };
+let userConfig = { overlayCorner: "top-right", overlayOpacity: 70, overlaySize: 350, mapCheckEnabled: true };
 
 function loadUserConfig() {
   try {
@@ -156,7 +156,33 @@ function createTray() {
   });
 }
 
+function stopMapCheck() {
+  if (mapCheckProcess) {
+    console.log("[Main] Stopping map-check process...");
+    mapCheckProcess.removeAllListeners("close");
+    mapCheckProcess.kill();
+    mapCheckProcess = null;
+  }
+  mapCheckStatus = { status: "disabled", monitor: null };
+  if (window && !window.isDestroyed()) {
+    window.webContents.send("map-check-event", { type: "disabled" });
+  }
+}
+
 function startMapCheck() {
+  if (userConfig.mapCheckEnabled === false) {
+    console.log("[Main] Map check is disabled in config.");
+    mapCheckStatus = { status: "disabled", monitor: null };
+    if (window && !window.isDestroyed()) {
+      window.webContents.send("map-check-event", { type: "disabled" });
+    }
+    return;
+  }
+
+  if (mapCheckProcess) {
+    return;
+  }
+
   const exeName = "map-check.exe";
   const mapCheckPath = app.isPackaged
     ? join(process.resourcesPath, "map-check", exeName)
@@ -416,6 +442,10 @@ ipcMain.handle("finish-login", () => collector?.finishLogin());
 ipcMain.handle("collect-now", () => collector?.collect());
 ipcMain.handle("clear-login", () => collector?.clearLogin());
 ipcMain.handle("collector-status", () => collector ? collector.getState() : { message: "Iniciando coletor...", loggedIn: false, collecting: false });
+ipcMain.handle("show-map-preview", () => {
+  createMapOverlayWindow("DVARKA DEEPWOOD - TOBA LANDING");
+  return true;
+});
 ipcMain.handle("toggle-size", () => {
   compact = !compact;
   window.setSize(compact ? 480 : 1180, compact ? 620 : 760, true);
@@ -436,10 +466,19 @@ ipcMain.handle("get-overlay-settings", () => {
 });
 ipcMain.handle("save-overlay-settings", (_, settings) => {
   loadUserConfig();
+  const oldEnabled = userConfig.mapCheckEnabled !== false;
   userConfig = { ...userConfig, ...settings };
   saveUserConfig();
   if (mapOverlayWindow && !mapOverlayWindow.isDestroyed()) {
     positionOverlayWindow();
+  }
+  const newEnabled = userConfig.mapCheckEnabled !== false;
+  if (oldEnabled !== newEnabled) {
+    if (newEnabled) {
+      startMapCheck();
+    } else {
+      stopMapCheck();
+    }
   }
   return {
     ...userConfig,

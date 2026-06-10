@@ -214,6 +214,7 @@ h2:first-child{margin-top:2px}
     <div class="tab active" data-tab="stats"><span class="tab-icon">📊</span>Status</div>
     <div class="tab" data-tab="trends"><span class="tab-icon">🏆</span>Mais usados</div>
     <div class="tab" data-tab="matches"><span class="tab-icon">🎮</span>Partidas</div>
+    <div class="tab" data-tab="detector"><span class="tab-icon">🗺️</span>Detector</div>
   </div>
 
   <div class="content">
@@ -240,41 +241,7 @@ h2:first-child{margin-top:2px}
         <div class="card" id="killerCard"><h3 id="killerTitle">Top Killer</h3><div class="character-content" id="killerStats"></div></div>
       </div>
       
-      <div class="card" style="margin-top:12px; padding:12px; background:linear-gradient(145deg, #151a22, #0c0f15);">
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-          <span style="font-size:9px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);">Detector de Mapas (TAB)</span>
-          <b id="map-detector-status" style="color:var(--muted); font-size:10px; font-weight:700;">Iniciando...</b>
-        </div>
-        
-        <div style="border-top:1px solid var(--line); margin-top:8px; padding-top:8px; display:flex; flex-direction:column; gap:8px;">
-          <div style="display:flex; align-items:center; justify-content:space-between; font-size:10px;">
-            <span style="color:var(--muted)">Canto do Overlay:</span>
-            <select id="setting-overlay-corner" style="background:#1c222b; border:1px solid #313a46; color:#dce0e6; border-radius:4px; padding:2px 4px; font-size:10px; outline:none; cursor:pointer;">
-              <option value="top-left">Superior Esquerdo</option>
-              <option value="top-right">Superior Direito</option>
-              <option value="bottom-left">Inferior Esquerdo</option>
-              <option value="bottom-right">Inferior Direito</option>
-            </select>
-          </div>
-          <div style="display:flex; align-items:center; justify-content:space-between; font-size:10px;">
-            <span style="color:var(--muted)">Opacidade Overlay:</span>
-            <div style="display:flex; align-items:center; gap:6px;">
-              <input type="range" id="setting-overlay-opacity" min="10" max="100" step="5" style="width:80px; accent-color:var(--red); cursor:pointer;">
-              <span id="display-overlay-opacity" style="font-size:9px; width:30px; text-align:right;">70%</span>
-            </div>
-          </div>
-          <div style="display:flex; align-items:center; justify-content:space-between; font-size:10px;">
-            <span style="color:var(--muted)">Tamanho Overlay (px):</span>
-            <div style="display:flex; align-items:center; gap:6px;">
-              <input type="range" id="setting-overlay-size" min="200" max="600" step="20" style="width:80px; accent-color:var(--red); cursor:pointer;">
-              <span id="display-overlay-size" style="font-size:9px; width:35px; text-align:right;">350px</span>
-            </div>
-          </div>
-          <div style="font-size:8.5px; color:var(--muted); margin-top:2px; line-height:1.35; border-top: 1px dashed #2a313c; padding-top: 6px;">
-            ℹ️ O overlay do mapa fecha apenas com a tecla <b>Backspace</b>.
-          </div>
-        </div>
-      </div>
+
 
       <div class="footer">
         <button id="login">Fazer login</button>
@@ -325,6 +292,54 @@ h2:first-child{margin-top:2px}
     <div class="page" id="page-matches">
       <h2>Partidas recentes</h2>
       <div id="matches"></div>
+    </div>
+
+    <!-- PAGE 4: DETECTOR -->
+    <div class="page" id="page-detector">
+      <h2>Detector de Mapas</h2>
+      <div class="card" style="padding:12px; background:linear-gradient(145deg, #151a22, #0c0f15);">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <span style="font-size:9px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);">Detector de Mapas (TAB)</span>
+          <b id="map-detector-status" style="color:var(--muted); font-size:10px; font-weight:700;">Iniciando...</b>
+        </div>
+        
+        <div style="border-top:1px solid var(--line); margin-top:8px; padding-top:8px; display:flex; flex-direction:column; gap:8px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; font-size:10px;">
+            <span style="color:var(--muted)">Ativar Detector:</span>
+            <input type="checkbox" id="setting-map-check-enabled" style="accent-color:var(--red); cursor:pointer; width:14px; height:14px;">
+          </div>
+          <div style="display:flex; align-items:center; justify-content:space-between; font-size:10px;">
+            <span style="color:var(--muted)">Canto do Overlay:</span>
+            <select id="setting-overlay-corner" style="background:#1c222b; border:1px solid #313a46; color:#dce0e6; border-radius:4px; padding:2px 4px; font-size:10px; outline:none; cursor:pointer;">
+              <option value="top-left">Superior Esquerdo</option>
+              <option value="top-right">Superior Direito</option>
+              <option value="bottom-left">Inferior Esquerdo</option>
+              <option value="bottom-right">Inferior Direito</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:space-between; font-size:10px;">
+            <span style="color:var(--muted)">Opacidade Overlay:</span>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <input type="range" id="setting-overlay-opacity" min="10" max="100" step="5" style="width:80px; accent-color:var(--red); cursor:pointer;">
+              <span id="display-overlay-opacity" style="font-size:9px; width:30px; text-align:right;">70%</span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:space-between; font-size:10px;">
+            <span style="color:var(--muted)">Tamanho Overlay (px):</span>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <input type="range" id="setting-overlay-size" min="200" max="600" step="20" style="width:80px; accent-color:var(--red); cursor:pointer;">
+              <span id="display-overlay-size" style="font-size:9px; width:35px; text-align:right;">350px</span>
+            </div>
+          </div>
+          <div style="font-size:11px; color:var(--muted); margin-top:4px; line-height:1.45; border-top: 1px dashed #2a313c; padding-top: 8px;">
+            ℹ️ O detector analisa a tela após pressionar <b>TAB</b> no jogo.<br>
+            ℹ️ O overlay do mapa fecha apenas com a tecla <b>Backspace</b>.
+          </div>
+          <div style="margin-top: 6px; border-top: 1px dashed #2a313c; padding-top: 8px;">
+            <button id="btn-show-preview" style="width: 100%; padding: 8px; font-weight: bold; background: var(--red); border-color: var(--red); color: white; border-radius: 5px; cursor: pointer;">Mostrar Preview do Overlay</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -723,6 +738,9 @@ function updateMapCheckStatusUI(statusInfo) {
   } else if (statusInfo.status === 'initializing') {
     statusEl.textContent = 'Iniciando...';
     statusEl.style.color = '#f59e0b';
+  } else if (statusInfo.status === 'disabled') {
+    statusEl.textContent = 'Desativado';
+    statusEl.style.color = 'var(--muted)';
   } else if (statusInfo.status === 'error') {
     statusEl.textContent = '✗ ' + (statusInfo.error || 'Erro');
     statusEl.style.color = 'var(--red)';
@@ -738,6 +756,10 @@ window.dbd.onMapCheckEvent(function(event) {
   switch (event.type) {
     case 'ready':
       updateMapCheckStatusUI({ status: 'ready', monitor: event.monitor });
+      break;
+      
+    case 'disabled':
+      updateMapCheckStatusUI({ status: 'disabled' });
       break;
       
     case 'map_detected':
@@ -768,6 +790,7 @@ function initOverlaySettings() {
     $('setting-overlay-corner').value = settings.overlayCorner || 'top-right';
     $('setting-overlay-opacity').value = settings.overlayOpacity || 70;
     $('setting-overlay-size').value = settings.overlaySize || 350;
+    $('setting-map-check-enabled').checked = settings.mapCheckEnabled !== false;
     
     // Update displays
     $('display-overlay-opacity').textContent = (settings.overlayOpacity || 70) + '%';
@@ -779,6 +802,7 @@ function saveOverlaySettings() {
   var corner = $('setting-overlay-corner').value;
   var opacity = parseInt($('setting-overlay-opacity').value, 10) || 70;
   var size = parseInt($('setting-overlay-size').value, 10) || 350;
+  var enabled = $('setting-map-check-enabled').checked;
   
   // Update displays in real-time
   $('display-overlay-opacity').textContent = opacity + '%';
@@ -787,7 +811,8 @@ function saveOverlaySettings() {
   window.dbd.saveOverlaySettings({
     overlayCorner: corner,
     overlayOpacity: opacity,
-    overlaySize: size
+    overlaySize: size,
+    mapCheckEnabled: enabled
   }).then(function(settings) {
     console.log('[Overlay] Configurações salvas:', settings);
   });
@@ -796,6 +821,10 @@ function saveOverlaySettings() {
 $('setting-overlay-corner').onchange = saveOverlaySettings;
 $('setting-overlay-opacity').oninput = saveOverlaySettings;
 $('setting-overlay-size').oninput = saveOverlaySettings;
+$('setting-map-check-enabled').onchange = saveOverlaySettings;
+$('btn-show-preview').onclick = function() {
+  window.dbd.showMapPreview();
+};
 
 initOverlaySettings();
 

@@ -13,5 +13,6 @@ contextBridge.exposeInMainWorld("dbd", {
   mapCheckStatus: () => ipcRenderer.invoke("map-check-status"),
   onMapCheckEvent: callback => ipcRenderer.on("map-check-event", (_, value) => callback(value)),
   getOverlaySettings: () => ipcRenderer.invoke("get-overlay-settings"),
-  saveOverlaySettings: settings => ipcRenderer.invoke("save-overlay-settings", settings)
+  saveOverlaySettings: settings => ipcRenderer.invoke("save-overlay-settings", settings),
+  showMapPreview: () => ipcRenderer.invoke("show-map-preview")
 });
