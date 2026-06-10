@@ -2,7 +2,10 @@
 // Escuta globalmente a tecla TAB: captura screenshot após 100ms e roda OCR
 // em thread separada para não travar o listener de teclado.
 
-#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(windows, feature = "electron-subsystem"),
+    windows_subsystem = "windows"
+)]
 
 mod map_detector;
 use map_detector::DbdMapDetector;
@@ -130,19 +133,36 @@ impl OutputMode {
         }
     }
 
-    fn emit_map_not_found(self, capture: &CaptureMetrics, ocr_time: Duration) {
+    fn emit_map_not_found(
+        self,
+        capture: &CaptureMetrics,
+        ocr_time: Duration,
+        diagnostic: &map_detector::MapDetectionDiagnostic,
+    ) {
         match self {
             Self::Dev => {
+                println!("Mapa nao identificado");
+                println!("    Motivo: {}", diagnostic.reason);
+                println!("    OCR: {}", diagnostic.raw_ocr_text);
+                println!("    Trecho analisado: {}", diagnostic.map_part);
+                println!("    Threshold: {:.0}%", diagnostic.threshold * 100.0);
+                println!("    Candidatos mais proximos:");
+                for candidate in &diagnostic.candidates {
+                    println!(
+                        "      - {} via '{}' | score {:.0}% | trecho {:.0}% | texto completo {:.0}%",
+                        candidate.canonical,
+                        candidate.candidate,
+                        candidate.score * 100.0,
+                        candidate.map_part_score * 100.0,
+                        candidate.full_text_score * 100.0,
+                    );
+                }
+                println!();
+            }
+            Self::Json if false => {
                 println!("⚠️  Mapa não identificado\n");
             }
-            Self::Json => emit_json(format!(
-                "{{\"type\":\"map_not_found\",\"capture_source\":\"{}\",\"capture_ms\":{:.3},\"ocr_ms\":{:.3},\"screenshot_width\":{},\"screenshot_height\":{}}}",
-                capture.source.code(),
-                duration_ms(capture.time),
-                duration_ms(ocr_time),
-                capture.width,
-                capture.height,
-            )),
+            Self::Json => emit_json(json_map_not_found(capture, ocr_time, diagnostic)),
         }
     }
 
@@ -221,6 +241,44 @@ fn json_string(value: &str) -> String {
     }
     out.push('"');
     out
+}
+
+fn json_map_not_found(
+    capture: &CaptureMetrics,
+    ocr_time: Duration,
+    diagnostic: &map_detector::MapDetectionDiagnostic,
+) -> String {
+    format!(
+        "{{\"type\":\"map_not_found\",\"capture_source\":\"{}\",\"capture_ms\":{:.3},\"ocr_ms\":{:.3},\"screenshot_width\":{},\"screenshot_height\":{},\"diagnostic\":{{\"reason\":{},\"raw_ocr_text\":{},\"map_part\":{},\"threshold\":{:.4},\"candidates\":{}}}}}",
+        capture.source.code(),
+        duration_ms(capture.time),
+        duration_ms(ocr_time),
+        capture.width,
+        capture.height,
+        json_string(&diagnostic.reason),
+        json_string(&diagnostic.raw_ocr_text),
+        json_string(&diagnostic.map_part),
+        diagnostic.threshold,
+        json_candidates(&diagnostic.candidates),
+    )
+}
+
+fn json_candidates(candidates: &[map_detector::FuzzyCandidate]) -> String {
+    let items: Vec<String> = candidates
+        .iter()
+        .map(|candidate| {
+            format!(
+                "{{\"candidate\":{},\"canonical\":{},\"score\":{:.4},\"map_part_score\":{:.4},\"full_text_score\":{:.4}}}",
+                json_string(&candidate.candidate),
+                json_string(&candidate.canonical),
+                candidate.score,
+                candidate.map_part_score,
+                candidate.full_text_score,
+            )
+        })
+        .collect();
+
+    format!("[{}]", items.join(","))
 }
 
 fn get_detector() -> &'static DbdMapDetector {
@@ -438,8 +496,8 @@ fn legacy_dev_main() {
                     thread::spawn(|| {
                         let _guard = guard;
 
-                        // Aguarda 100ms para a animação do tab screen terminar
-                        thread::sleep(Duration::from_millis(100));
+                        // Aguarda 50ms para a animação do tab screen terminar
+                        thread::sleep(Duration::from_millis(50));
 
                         // Captura o screenshot com o mapa visível
                         let (screenshot, capture_time, capture_source) = match capture_screenshot()
@@ -521,7 +579,7 @@ fn main() {
                     let output = output;
                     thread::spawn(move || {
                         let _guard = guard;
-                        thread::sleep(Duration::from_millis(100));
+                        thread::sleep(Duration::from_millis(50));
 
                         let (screenshot, capture_time, capture_source) = match capture_screenshot()
                         {
@@ -541,15 +599,19 @@ fn main() {
 
                         let detector = get_detector();
                         let ocr_started_at = Instant::now();
-                        match detector.detect_map(&screenshot) {
-                            Ok(Some(result)) => output.emit_map_detected(
-                                &result,
-                                &capture,
-                                ocr_started_at.elapsed(),
-                            ),
-                            Ok(None) => {
-                                output.emit_map_not_found(&capture, ocr_started_at.elapsed())
-                            }
+                        match detector.detect_map_detailed(&screenshot) {
+                            Ok(detection) => match &detection.result {
+                                Some(result) => output.emit_map_detected(
+                                    result,
+                                    &capture,
+                                    ocr_started_at.elapsed(),
+                                ),
+                                None => output.emit_map_not_found(
+                                    &capture,
+                                    ocr_started_at.elapsed(),
+                                    &detection.diagnostic,
+                                ),
+                            },
                             Err(e) => output.emit_ocr_error(&e.to_string(), &capture),
                         }
                     });

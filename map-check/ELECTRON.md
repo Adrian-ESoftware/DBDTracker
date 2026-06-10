@@ -14,7 +14,7 @@ Use o perfil `electron`:
 
 ```powershell
 cd C:\Users\Mesck\OneDrive\Documentos\workspace\DBDTracker\map-check
-cargo build --profile electron
+cargo build --profile electron --features electron-subsystem
 ```
 
 O executavel sera gerado em:
@@ -24,6 +24,18 @@ map-check\target\electron\map-check.exe
 ```
 
 Este perfil nao usa `target-cpu=native`, entao o binario e mais seguro para distribuir em PCs diferentes.
+
+Tambem existe um alias equivalente:
+
+```powershell
+cargo build-electron
+```
+
+Para testar performance dentro do jogo com logs no terminal, nao use `cargo run` simples, pois ele roda em debug e o OCR pode ficar varios segundos mais lento. Use:
+
+```powershell
+cargo run --release -- --dev
+```
 
 ## Modos de execucao
 
@@ -173,9 +185,26 @@ Emitido quando o OCR rodou, mas o mapa nao foi identificado.
   "capture_ms": 18.2,
   "ocr_ms": 150.4,
   "screenshot_width": 1920,
-  "screenshot_height": 1080
+  "screenshot_height": 1080,
+  "diagnostic": {
+    "reason": "Melhor candidato abaixo do threshold (48% < 60%)",
+    "raw_ocr_text": "TEXTO QUE O OCR LEU",
+    "map_part": "TRECHO USADO PARA MATCH",
+    "threshold": 0.6,
+    "candidates": [
+      {
+        "candidate": "Thompson House",
+        "canonical": "THE THOMPSON HOUSE",
+        "score": 0.48,
+        "map_part_score": 0.48,
+        "full_text_score": 0.42
+      }
+    ]
+  }
 }
 ```
+
+Use `diagnostic.raw_ocr_text` para ver exatamente o que o OCR encontrou. Use `diagnostic.candidates` para depurar quais mapas ficaram mais proximos e por que nao passaram do threshold.
 
 ### Erros
 

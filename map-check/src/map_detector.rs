@@ -103,7 +103,6 @@ pub const DBD_MAPS: &[(&str, &str)] = &[
     ("Forgotten Ruins", "FORGOTTEN RUINS"),
     // Dvarka Deepwood
     ("Nostromo Wreckage", "NOSTROMO WRECKAGE"),
-    ("Toba Landing", "TOBA LANDING"),
     // Realm display names (PT-BR)
     ("Fazenda Coldwind", "COLDWIND FARM"),
     ("MacMillan", "MACMILLAN ESTATE"),
@@ -113,6 +112,7 @@ pub const DBD_MAPS: &[(&str, &str)] = &[
     ("Floresta Vermelha", "RED FOREST"),
     ("Propriedade Yamaoka", "YAMAOKA ESTATE"),
     ("Ilha Murcha", "WITHERED ISLE"),
+    ("Floresta de Dvarka - Pouso do lago toba", "DVARKA DEEPWOOD - TOBA LANDING"),
 ];
 
 // ── Resultado da detecção ─────────────────────────────────────────────────────
@@ -124,6 +124,30 @@ pub struct MapDetectionResult {
     pub raw_ocr_text: String,
     /// Score de confiança do fuzzy match (0.0–1.0)
     pub confidence: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct MapDetection {
+    pub result: Option<MapDetectionResult>,
+    pub diagnostic: MapDetectionDiagnostic,
+}
+
+#[derive(Debug, Clone)]
+pub struct MapDetectionDiagnostic {
+    pub raw_ocr_text: String,
+    pub map_part: String,
+    pub threshold: f32,
+    pub reason: String,
+    pub candidates: Vec<FuzzyCandidate>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FuzzyCandidate {
+    pub candidate: String,
+    pub canonical: String,
+    pub score: f32,
+    pub map_part_score: f32,
+    pub full_text_score: f32,
 }
 
 // ── Motor de OCR (lazy-initialized, reuse entre frames) ──────────────────────
@@ -150,10 +174,15 @@ impl DbdMapDetector {
     ///
     /// # Argumentos
     /// * `screenshot` - Imagem capturada quando o usuário pressionou Tab
+    #[allow(dead_code)]
     pub fn detect_map(
         &self,
         screenshot: &DynamicImage,
     ) -> anyhow::Result<Option<MapDetectionResult>> {
+        Ok(self.detect_map_detailed(screenshot)?.result)
+    }
+
+    pub fn detect_map_detailed(&self, screenshot: &DynamicImage) -> anyhow::Result<MapDetection> {
         // 1. Recorta apenas a região do nome do mapa (rodapé)
         let cropped = crop_map_region(screenshot);
 
@@ -180,17 +209,33 @@ impl DbdMapDetector {
             .to_uppercase();
 
         if raw_text.trim().is_empty() {
-            return Ok(None);
+            return Ok(MapDetection {
+                result: None,
+                diagnostic: MapDetectionDiagnostic {
+                    raw_ocr_text: raw_text,
+                    map_part: String::new(),
+                    threshold: 0.6,
+                    reason: "OCR nao retornou texto".to_string(),
+                    candidates: Vec::new(),
+                },
+            });
         }
 
         // 4. Fuzzy match contra a lista de mapas conhecidos
-        let result = fuzzy_match_map(&raw_text);
+        let diagnostic = fuzzy_diagnostic(&raw_text);
+        let result = diagnostic.candidates.first().and_then(|candidate| {
+            if candidate.score > diagnostic.threshold {
+                Some(MapDetectionResult {
+                    map_name: candidate.canonical.clone(),
+                    raw_ocr_text: raw_text.clone(),
+                    confidence: candidate.score,
+                })
+            } else {
+                None
+            }
+        });
 
-        Ok(result.map(|(map_name, confidence)| MapDetectionResult {
-            map_name,
-            raw_ocr_text: raw_text,
-            confidence,
-        }))
+        Ok(MapDetection { result, diagnostic })
     }
 }
 
@@ -235,6 +280,7 @@ fn preprocess_for_ocr(img: &DynamicImage) -> image::RgbImage {
 /// 2. Tenta casar o texto completo (inclui realm) — peso menor.
 /// 3. Substring match exato: bônus proporcional ao tamanho do candidato.
 /// 4. Fallback: distância de Levenshtein em janela deslizante.
+#[allow(dead_code)]
 fn fuzzy_match_map(ocr_text: &str) -> Option<(String, f32)> {
     let mut best_name = String::new();
     let mut best_score: f32 = 0.0;
@@ -263,6 +309,53 @@ fn fuzzy_match_map(ocr_text: &str) -> Option<(String, f32)> {
         None
     } else {
         Some((best_name, best_score))
+    }
+}
+
+fn fuzzy_diagnostic(ocr_text: &str) -> MapDetectionDiagnostic {
+    let threshold = 0.6;
+    let map_part = ocr_text.split(" - ").last().unwrap_or(ocr_text).trim();
+    let mut candidates: Vec<FuzzyCandidate> = DBD_MAPS
+        .iter()
+        .map(|(candidate, canonical)| {
+            let candidate_upper = candidate.to_uppercase();
+            let map_part_score = substring_score(map_part, &candidate_upper);
+            let full_text_score = substring_score(ocr_text, &candidate_upper);
+            let score = map_part_score.max(full_text_score * 0.85);
+
+            FuzzyCandidate {
+                candidate: candidate.to_string(),
+                canonical: canonical.to_string(),
+                score,
+                map_part_score,
+                full_text_score,
+            }
+        })
+        .collect();
+
+    candidates.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    candidates.truncate(5);
+
+    let reason = match candidates.first() {
+        Some(candidate) if candidate.score > threshold => "Match acima do threshold".to_string(),
+        Some(candidate) => format!(
+            "Melhor candidato abaixo do threshold ({:.0}% < {:.0}%)",
+            candidate.score * 100.0,
+            threshold * 100.0
+        ),
+        None => "Nenhum candidato calculado".to_string(),
+    };
+
+    MapDetectionDiagnostic {
+        raw_ocr_text: ocr_text.to_string(),
+        map_part: map_part.to_string(),
+        threshold,
+        reason,
+        candidates,
     }
 }
 

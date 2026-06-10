@@ -3,6 +3,9 @@ name = "map-check"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+electron-subsystem = []
+
 [dependencies]
 xcap = "0.3"
 rdev = "0.5"

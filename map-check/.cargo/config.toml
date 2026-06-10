@@ -1,5 +1,5 @@
 [alias]
-build-electron = "build --profile electron"
+build-electron = "build --profile electron --features electron-subsystem"
 test-release = "test --release"
 
 # O build portable usado pelo Electron nao define target-cpu=native.
