@@ -22,6 +22,15 @@ strip         = "symbols" # remove debug symbols
 debug         = 0         # zero debug info
 
 # ── Perfil de benchmark (testes de performance) ─────────────────────────────
+[profile.electron]
+inherits      = "release"
+opt-level     = 3
+lto           = true
+codegen-units = 1
+panic         = "abort"
+strip         = "symbols"
+debug         = 0
+
 [profile.bench]
 opt-level     = 3
 lto           = true

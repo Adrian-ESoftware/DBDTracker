@@ -49,5 +49,9 @@ fn download_if_missing(path: impl AsRef<Path>, url: &str) {
     }
 
     let size = std::fs::metadata(path).unwrap().len();
-    eprintln!("[build] Modelo salvo: {} ({:.1} MB)", path.display(), size as f64 / 1_000_000.0);
+    eprintln!(
+        "[build] Modelo salvo: {} ({:.1} MB)",
+        path.display(),
+        size as f64 / 1_000_000.0
+    );
 }

@@ -12,10 +12,8 @@ use ocrs::{ImageSource, OcrEngine, OcrEngineParams};
 // ── Modelos embarcados no binário ──────────────────────────────────────────────
 // Os arquivos .rten são ~5MB cada; o binário final fica ~10MB maior.
 // Se preferir não embarcar, troque include_bytes! por Model::load_file(path).
-static DETECTION_MODEL: &[u8] =
-    include_bytes!("../assets/text-detection.rten");
-static RECOGNITION_MODEL: &[u8] =
-    include_bytes!("../assets/text-recognition.rten");
+static DETECTION_MODEL: &[u8] = include_bytes!("../assets/text-detection.rten");
+static RECOGNITION_MODEL: &[u8] = include_bytes!("../assets/text-recognition.rten");
 
 // ── Região do nome do mapa na tela ────────────────────────────────────────────
 // Medido no screenshot 1456×816 (tab screen do DBD).
@@ -27,9 +25,9 @@ static RECOGNITION_MODEL: &[u8] =
 //
 // Essas proporções funcionam para 1080p, 1440p e 4K pois são relativas.
 const MAP_REGION_X_START: f32 = 0.30;
-const MAP_REGION_X_END:   f32 = 0.70;
+const MAP_REGION_X_END: f32 = 0.70;
 const MAP_REGION_Y_START: f32 = 0.79;
-const MAP_REGION_Y_END:   f32 = 0.94;
+const MAP_REGION_Y_END: f32 = 0.94;
 
 // ── Lista completa de mapas do DBD (PT-BR e EN) ───────────────────────────────
 // Fonte: deadbydaylight.fandom.com/wiki/Realms — 58 mapas jogáveis (2025)
@@ -39,82 +37,82 @@ const MAP_REGION_Y_END:   f32 = 0.94;
 // A lista cobre ambos os idiomas para o fuzzy match funcionar independente do idioma do jogo.
 pub const DBD_MAPS: &[(&str, &str)] = &[
     // MacMillan Estate
-    ("Shelter Woods",          "SHELTER WOODS"),
-    ("Groaning Storehouse",    "GROANING STOREHOUSE"),
-    ("Ironworks of Misery",    "IRONWORKS OF MISERY"),
-    ("Suffocation Pit",        "SUFFOCATION PIT"),
-    ("Coal Tower",             "COAL TOWER"),
+    ("Shelter Woods", "SHELTER WOODS"),
+    ("Groaning Storehouse", "GROANING STOREHOUSE"),
+    ("Ironworks of Misery", "IRONWORKS OF MISERY"),
+    ("Suffocation Pit", "SUFFOCATION PIT"),
+    ("Coal Tower", "COAL TOWER"),
     // Autohaven Wreckers
     ("Azarov's Resting Place", "AZAROV'S RESTING PLACE"),
-    ("Blood Lodge",            "BLOOD LODGE"),
-    ("Gas Heaven",             "GAS HEAVEN"),
-    ("Wreckers' Yard",         "WRECKERS' YARD"),
-    ("Autohaven Wreckers",     "AUTOHAVEN WRECKERS"),
+    ("Blood Lodge", "BLOOD LODGE"),
+    ("Gas Heaven", "GAS HEAVEN"),
+    ("Wreckers' Yard", "WRECKERS' YARD"),
+    ("Autohaven Wreckers", "AUTOHAVEN WRECKERS"),
     // Coldwind Farm
-    ("Thompson House",         "THE THOMPSON HOUSE"),
-    ("Casa dos Thompson",      "THE THOMPSON HOUSE"),
-    ("Rotten Fields",          "ROTTEN FIELDS"),
-    ("Campos Podres",          "ROTTEN FIELDS"),
-    ("Fractured Cowshed",      "FRACTURED COWSHED"),
-    ("Curral Rachado",         "FRACTURED COWSHED"),
-    ("Torment Creek",          "TORMENT CREEK"),
-    ("Córrego do Tormento",    "TORMENT CREEK"),
-    ("Rancid Abattoir",        "RANCID ABATTOIR"),
-    ("Abatedouro Rançoso",     "RANCID ABATTOIR"),
+    ("Thompson House", "THE THOMPSON HOUSE"),
+    ("Casa dos Thompson", "THE THOMPSON HOUSE"),
+    ("Rotten Fields", "ROTTEN FIELDS"),
+    ("Campos Podres", "ROTTEN FIELDS"),
+    ("Fractured Cowshed", "FRACTURED COWSHED"),
+    ("Curral Rachado", "FRACTURED COWSHED"),
+    ("Torment Creek", "TORMENT CREEK"),
+    ("Córrego do Tormento", "TORMENT CREEK"),
+    ("Rancid Abattoir", "RANCID ABATTOIR"),
+    ("Abatedouro Rançoso", "RANCID ABATTOIR"),
     // Crotus Prenn Asylum
-    ("Disturbed Ward",         "DISTURBED WARD"),
-    ("Father Campbell's Chapel","FATHER CAMPBELL'S CHAPEL"),
+    ("Disturbed Ward", "DISTURBED WARD"),
+    ("Father Campbell's Chapel", "FATHER CAMPBELL'S CHAPEL"),
     // Backwater Swamp
-    ("The Pale Rose",          "THE PALE ROSE"),
-    ("Grim Pantry",            "GRIM PANTRY"),
+    ("The Pale Rose", "THE PALE ROSE"),
+    ("Grim Pantry", "GRIM PANTRY"),
     // Léry's Memorial Institute
-    ("Treatment Theatre",      "TREATMENT THEATRE"),
+    ("Treatment Theatre", "TREATMENT THEATRE"),
     // Red Forest
-    ("Mother's Dwelling",      "MOTHER'S DWELLING"),
-    ("Temple of Purgation",    "THE TEMPLE OF PURGATION"),
+    ("Mother's Dwelling", "MOTHER'S DWELLING"),
+    ("Temple of Purgation", "THE TEMPLE OF PURGATION"),
     // Haddonfield
-    ("Lampkin Lane",           "LAMPKIN LANE"),
+    ("Lampkin Lane", "LAMPKIN LANE"),
     // Gideon Meat Plant
-    ("The Game",               "THE GAME"),
+    ("The Game", "THE GAME"),
     // Yamaoka Estate
-    ("Family Residence",       "FAMILY RESIDENCE"),
-    ("Sanctum of Wrath",       "SANCTUM OF WRATH"),
+    ("Family Residence", "FAMILY RESIDENCE"),
+    ("Sanctum of Wrath", "SANCTUM OF WRATH"),
     // Ormond
-    ("Mount Ormond Resort",    "MOUNT ORMOND RESORT"),
+    ("Mount Ormond Resort", "MOUNT ORMOND RESORT"),
     // Hawkins National Laboratory
-    ("The Underground Complex","THE UNDERGROUND COMPLEX"),
+    ("The Underground Complex", "THE UNDERGROUND COMPLEX"),
     // Grave of Glenvale
-    ("Dead Dawg Saloon",       "DEAD DAWG SALOON"),
+    ("Dead Dawg Saloon", "DEAD DAWG SALOON"),
     // Springwood
-    ("Badham Preschool I",     "BADHAM PRESCHOOL I"),
-    ("Badham Preschool II",    "BADHAM PRESCHOOL II"),
-    ("Badham Preschool III",   "BADHAM PRESCHOOL III"),
-    ("Badham Preschool IV",    "BADHAM PRESCHOOL IV"),
-    ("Badham Preschool V",     "BADHAM PRESCHOOL V"),
+    ("Badham Preschool I", "BADHAM PRESCHOOL I"),
+    ("Badham Preschool II", "BADHAM PRESCHOOL II"),
+    ("Badham Preschool III", "BADHAM PRESCHOOL III"),
+    ("Badham Preschool IV", "BADHAM PRESCHOOL IV"),
+    ("Badham Preschool V", "BADHAM PRESCHOOL V"),
     // Silent Hill
-    ("Midwich Elementary School","MIDWICH ELEMENTARY SCHOOL"),
+    ("Midwich Elementary School", "MIDWICH ELEMENTARY SCHOOL"),
     // Raccoon City
-    ("Raccoon City Police Station","RACCOON CITY POLICE STATION"),
+    ("Raccoon City Police Station", "RACCOON CITY POLICE STATION"),
     // Forsaken Boneyard
-    ("Eyrie of Crows",         "EYRIE OF CROWS"),
-    ("Garden of Joy",          "GARDEN OF JOY"),
+    ("Eyrie of Crows", "EYRIE OF CROWS"),
+    ("Garden of Joy", "GARDEN OF JOY"),
     // Withered Isle
-    ("Greenville Square",      "GREENVILLE SQUARE"),
+    ("Greenville Square", "GREENVILLE SQUARE"),
     // The Decimated Borgo
-    ("The Shattered Square",   "THE SHATTERED SQUARE"),
-    ("Forgotten Ruins",        "FORGOTTEN RUINS"),
+    ("The Shattered Square", "THE SHATTERED SQUARE"),
+    ("Forgotten Ruins", "FORGOTTEN RUINS"),
     // Dvarka Deepwood
-    ("Nostromo Wreckage",      "NOSTROMO WRECKAGE"),
-    ("Toba Landing",           "TOBA LANDING"),
+    ("Nostromo Wreckage", "NOSTROMO WRECKAGE"),
+    ("Toba Landing", "TOBA LANDING"),
     // Realm display names (PT-BR)
-    ("Fazenda Coldwind",       "COLDWIND FARM"),
-    ("MacMillan",              "MACMILLAN ESTATE"),
-    ("Autohaven",              "AUTOHAVEN WRECKERS"),
-    ("Pântano de Backwater",   "BACKWATER SWAMP"),
-    ("Instituto Memorial Léry","LÉRY'S MEMORIAL INSTITUTE"),
-    ("Floresta Vermelha",      "RED FOREST"),
-    ("Propriedade Yamaoka",    "YAMAOKA ESTATE"),
-    ("Ilha Murcha",            "WITHERED ISLE"),
+    ("Fazenda Coldwind", "COLDWIND FARM"),
+    ("MacMillan", "MACMILLAN ESTATE"),
+    ("Autohaven", "AUTOHAVEN WRECKERS"),
+    ("Pântano de Backwater", "BACKWATER SWAMP"),
+    ("Instituto Memorial Léry", "LÉRY'S MEMORIAL INSTITUTE"),
+    ("Floresta Vermelha", "RED FOREST"),
+    ("Propriedade Yamaoka", "YAMAOKA ESTATE"),
+    ("Ilha Murcha", "WITHERED ISLE"),
 ];
 
 // ── Resultado da detecção ─────────────────────────────────────────────────────
@@ -152,7 +150,10 @@ impl DbdMapDetector {
     ///
     /// # Argumentos
     /// * `screenshot` - Imagem capturada quando o usuário pressionou Tab
-    pub fn detect_map(&self, screenshot: &DynamicImage) -> anyhow::Result<Option<MapDetectionResult>> {
+    pub fn detect_map(
+        &self,
+        screenshot: &DynamicImage,
+    ) -> anyhow::Result<Option<MapDetectionResult>> {
         // 1. Recorta apenas a região do nome do mapa (rodapé)
         let cropped = crop_map_region(screenshot);
 
@@ -201,8 +202,8 @@ fn crop_map_region(img: &DynamicImage) -> DynamicImage {
 
     let x = (w as f32 * MAP_REGION_X_START) as u32;
     let y = (h as f32 * MAP_REGION_Y_START) as u32;
-    let width  = (w as f32 * (MAP_REGION_X_END - MAP_REGION_X_START)) as u32;
-    let height = (h as f32 * (MAP_REGION_Y_END   - MAP_REGION_Y_START)) as u32;
+    let width = (w as f32 * (MAP_REGION_X_END - MAP_REGION_X_START)) as u32;
+    let height = (h as f32 * (MAP_REGION_Y_END - MAP_REGION_Y_START)) as u32;
 
     img.crop_imm(x, y, width, height)
 }
@@ -239,11 +240,7 @@ fn fuzzy_match_map(ocr_text: &str) -> Option<(String, f32)> {
     let mut best_score: f32 = 0.0;
 
     // Separa o texto em "REALM" e "MAP NAME" se houver " - "
-    let map_part = ocr_text
-        .split(" - ")
-        .last()
-        .unwrap_or(ocr_text)
-        .trim();
+    let map_part = ocr_text.split(" - ").last().unwrap_or(ocr_text).trim();
 
     for (candidate, canonical) in DBD_MAPS {
         let candidate_upper = candidate.to_uppercase();
@@ -316,19 +313,27 @@ fn levenshtein_similarity(a: &str, b: &str) -> f32 {
     let la = a.len();
     let lb = b.len();
 
-    if la == 0 { return if lb == 0 { 1.0 } else { 0.0 }; }
-    if lb == 0 { return 0.0; }
+    if la == 0 {
+        return if lb == 0 { 1.0 } else { 0.0 };
+    }
+    if lb == 0 {
+        return 0.0;
+    }
 
     let mut dp = vec![vec![0usize; lb + 1]; la + 1];
-    for i in 0..=la { dp[i][0] = i; }
-    for j in 0..=lb { dp[0][j] = j; }
+    for i in 0..=la {
+        dp[i][0] = i;
+    }
+    for j in 0..=lb {
+        dp[0][j] = j;
+    }
 
     for i in 1..=la {
         for j in 1..=lb {
-            dp[i][j] = if a[i-1] == b[j-1] {
-                dp[i-1][j-1]
+            dp[i][j] = if a[i - 1] == b[j - 1] {
+                dp[i - 1][j - 1]
             } else {
-                1 + dp[i-1][j].min(dp[i][j-1]).min(dp[i-1][j-1])
+                1 + dp[i - 1][j].min(dp[i][j - 1]).min(dp[i - 1][j - 1])
             };
         }
     }
