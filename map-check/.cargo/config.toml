@@ -1,0 +1,11 @@
+# ── Flags de compilação para performance máxima ────────────────────────────
+# target-cpu=native: ativa todas as instruções SIMD da CPU local
+#   → AVX2, FMA, BMI2, SSE4.2, etc.
+#   → essencial para inferência de rede neural (rten)
+#   → tipicamente 2–4× mais rápido em operações de matriz
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]

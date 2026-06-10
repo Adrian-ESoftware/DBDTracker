@@ -1,0 +1,29 @@
+[package]
+name = "map-check"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xcap = "0.3"
+rdev = "0.5"
+image = "0.25"
+anyhow = "1"
+ocrs = { git = "https://github.com/robertknight/ocrs.git" }
+rten = "0.24"
+
+# ── Perfil release otimizado ao máximo ──────────────────────────────────────
+# foco: throughput de inferência (OCR), baixa latência, binário enxuto
+[profile.release]
+opt-level     = 3         # otimização agressiva (padrão já é 3, explícito)
+lto           = true      # thin LTO — melhor custo/benefício que fat LTO
+codegen-units = 1         # unidade única de codegen → melhor inlining
+panic         = "abort"   # sem unwind tables → binário menor, sem overhead
+strip         = "symbols" # remove debug symbols
+debug         = 0         # zero debug info
+
+# ── Perfil de benchmark (testes de performance) ─────────────────────────────
+[profile.bench]
+opt-level     = 3
+lto           = true
+codegen-units = 1
+debug         = 0
