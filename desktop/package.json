@@ -28,7 +28,14 @@
       "background-collector.js",
       "overlay.html",
       "tray_icons",
+      "map_overlays",
       ".env"
+    ],
+    "extraResources": [
+      {
+        "from": "../map-check/target/electron/map-check.exe",
+        "to": "map-check/map-check.exe"
+      }
     ],
     "win": {
       "target": "portable",

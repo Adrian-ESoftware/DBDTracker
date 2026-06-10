@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ingestMatches, ingestOfficialMetrics, ingestOfficialSections, ingestSnapshots, ingestTopCharacter, killers, maps, matches, officialMetrics, officialSections, overview, perks, topCharacters, trends, assetImages } from "./database.js";
 
 const allowedOrigin = origin => !origin || origin.startsWith("https://stats.deadbydaylight.com");
@@ -18,13 +20,31 @@ const body = request => new Promise((resolve, reject) => {
   request.on("error", reject);
 });
 
-export function startServer(db, port = 8765) {
+export function startServer(db, port = 8765, mapOverlaysPath = "") {
   return createServer(async (request, response) => {
     const origin = request.headers.origin;
     if (!allowedOrigin(origin)) return reply(response, 403, { detail: "Origin not allowed" });
     if (request.method === "OPTIONS") return reply(response, 204, {}, origin);
     try {
       const url = new URL(request.url, `http://${request.headers.host}`);
+      if (url.pathname.startsWith("/api/map-overlays/")) {
+        const filename = decodeURIComponent(url.pathname.substring("/api/map-overlays/".length));
+        const filePath = join(mapOverlaysPath, filename);
+        if (existsSync(filePath)) {
+          try {
+            const data = readFileSync(filePath);
+            response.writeHead(200, {
+              "content-type": "image/png",
+              ...(origin && allowedOrigin(origin) ? { "access-control-allow-origin": origin } : {})
+            });
+            return response.end(data);
+          } catch (e) {
+            return reply(response, 500, { detail: e.message }, origin);
+          }
+        } else {
+          return reply(response, 404, { detail: "Not found" }, origin);
+        }
+      }
       if (request.method === "POST" && url.pathname === "/api/matches/bulk") return reply(response, 200, await ingestMatches(db, await body(request)), origin);
       if (request.method === "POST" && url.pathname === "/api/snapshots/bulk") return reply(response, 200, await ingestSnapshots(db, await body(request)), origin);
       if (request.method === "POST" && url.pathname === "/api/official-metrics") return reply(response, 200, await ingestOfficialMetrics(db, await body(request)), origin);
