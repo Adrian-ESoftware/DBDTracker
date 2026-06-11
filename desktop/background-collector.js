@@ -342,6 +342,8 @@ export function createBackgroundCollector(db, onStatus) {
   let loggedIn = false;
   let lastRun;
   let releaseTimer;
+  let lastStatsScrapeTime = 0;
+  const STATS_SCRAPE_INTERVAL = 30 * 60 * 1000; // 30 minutes in ms
   const pendingResponses = new Map();
 
   const status = (message, extra = {}) => {
@@ -488,71 +490,94 @@ export function createBackgroundCollector(db, onStatus) {
     collecting = true;
     status("Atualizando dados em segundo plano...");
     try {
-      const statistics = await load(STATISTICS_URL, true);
-      if (!loggedIn) {
-        status("Sessao expirada. Abra o login uma vez.");
-        return state;
-      }
+      const now = Date.now();
+      const needStats = (now - lastStatsScrapeTime) > STATS_SCRAPE_INTERVAL;
 
-      // Obter o e-mail do usuário no contexto da página já carregada
-      const email = await fetchUserEmail(statistics);
-      if (email) {
-        db.userEmail = email;
-        saveUserEmail(email);
-        console.log(`[Collector] E-mail do usuário ativo obtido após carregamento: ${email}`);
-      }
-
-      const result = await statistics.webContents.executeJavaScript(metricsScript);
-      await ingestOfficialMetrics(db, { source_url: STATISTICS_URL, captured_at: new Date().toISOString(), metrics: result.metrics });
-      await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-dom", captured_at: new Date().toISOString(), raw: result }]);
-      const regularTrials = await statistics.webContents.executeJavaScript(`(async () => {
-        const target = [...document.querySelectorAll("button,a,[role=tab]")].find(node => /regular trials/i.test(node.textContent || ""));
-        if (target) { target.click(); await new Promise(resolve => setTimeout(resolve, 1800)); }
-        return (${metricsScript});
-      })()`);
-      await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-regular-trials-dom", captured_at: new Date().toISOString(), raw: regularTrials }]);
-      for (const roleName of ["Survivor", "Killer"]) {
-        // Clica na aba correspondente (suporta Inglês e Português)
-        await statistics.webContents.executeJavaScript(`(() => {
-          const target = [...document.querySelectorAll("button,a,[role=tab]")]
-            .find(node => {
-              const text = (node.textContent || "").trim().toLowerCase();
-              return ${roleName === "Survivor"} 
-                ? ["survivor", "sobrevivente"].includes(text)
-                : ["killer", "assassino"].includes(text);
-            });
-          if (target) {
-            target.click();
-            return true;
-          }
-          return false;
-        })()`).catch(err => console.warn(`[Collector] Erro ao clicar na aba ${roleName}:`, err.message));
-
-        // Aguarda a renderização ou transição da página
-        await new Promise(resolve => setTimeout(resolve, 2500));
-
-        // Extrai os dados em um passo separado para evitar erros de navegação abortada
-        const detail = await statistics.webContents.executeJavaScript(characterDetailScript)
-          .catch(err => {
-            console.error(`[Collector] Erro na execução de characterDetailScript para ${roleName}:`, err.message);
-            return { character: null, values: {} };
-          });
-
-        if (detail && detail.character) {
-          const topValues = detail.image ? { ...detail.values, image: detail.image } : detail.values;
-          await ingestTopCharacter(db, {
-            section: "regular-trials", period: "all-time", role: roleName.toLowerCase(),
-            character: detail.character, captured_at: new Date().toISOString(), values: topValues
-          });
+      if (needStats) {
+        console.log("[Collector] Iniciando coleta de estatísticas globais...");
+        const statistics = await load(STATISTICS_URL, true);
+        if (!loggedIn) {
+          status("Sessao expirada. Abra o login uma vez.");
+          return state;
         }
-        await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: `statistics-regular-trials-${roleName.toLowerCase()}-dom`, captured_at: new Date().toISOString(), raw: detail }]);
+
+        // Obter o e-mail do usuário no contexto da página já carregada
+        const email = await fetchUserEmail(statistics);
+        if (email) {
+          db.userEmail = email;
+          saveUserEmail(email);
+          console.log(`[Collector] E-mail do usuário ativo obtido após carregamento: ${email}`);
+        }
+
+        const result = await statistics.webContents.executeJavaScript(metricsScript);
+        await ingestOfficialMetrics(db, { source_url: STATISTICS_URL, captured_at: new Date().toISOString(), metrics: result.metrics });
+        await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-dom", captured_at: new Date().toISOString(), raw: result }]);
+        const regularTrials = await statistics.webContents.executeJavaScript(`(async () => {
+          const target = [...document.querySelectorAll("button,a,[role=tab]")].find(node => /regular trials/i.test(node.textContent || ""));
+          if (target) { target.click(); await new Promise(resolve => setTimeout(resolve, 1800)); }
+          return (${metricsScript});
+        })()`);
+        await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-regular-trials-dom", captured_at: new Date().toISOString(), raw: regularTrials }]);
+        for (const roleName of ["Survivor", "Killer"]) {
+          // Clica na aba correspondente (suporta Inglês e Português)
+          await statistics.webContents.executeJavaScript(`(() => {
+            const target = [...document.querySelectorAll("button,a,[role=tab]")]
+              .find(node => {
+                const text = (node.textContent || "").trim().toLowerCase();
+                return ${roleName === "Survivor"} 
+                  ? ["survivor", "sobrevivente"].includes(text)
+                  : ["killer", "assassino"].includes(text);
+              });
+            if (target) {
+              target.click();
+              return true;
+            }
+            return false;
+          })()`).catch(err => console.warn(`[Collector] Erro ao clicar na aba ${roleName}:`, err.message));
+
+          // Aguarda a renderização ou transição da página
+          await new Promise(resolve => setTimeout(resolve, 2500));
+
+          // Extrai os dados em um passo separado para evitar erros de navegação abortada
+          const detail = await statistics.webContents.executeJavaScript(characterDetailScript)
+            .catch(err => {
+              console.error(`[Collector] Erro na execução de characterDetailScript para ${roleName}:`, err.message);
+              return { character: null, values: {} };
+            });
+
+          if (detail && detail.character) {
+            const topValues = detail.image ? { ...detail.values, image: detail.image } : detail.values;
+            await ingestTopCharacter(db, {
+              section: "regular-trials", period: "all-time", role: roleName.toLowerCase(),
+              character: detail.character, captured_at: new Date().toISOString(), values: topValues
+            });
+          }
+          await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: `statistics-regular-trials-${roleName.toLowerCase()}-dom`, captured_at: new Date().toISOString(), raw: detail }]);
+        }
+        
+        lastStatsScrapeTime = now;
+        
+        const historyUrl = await statistics.webContents.executeJavaScript(
+          `[...document.links].map(link => link.href).find(href => /match.*history|history.*match/i.test(href)) || ${JSON.stringify(HISTORY_URL)}`
+        );
+        await load(historyUrl, false);
+      } else {
+        console.log("[Collector] Pulando estatísticas globais, carregando histórico de partidas diretamente...");
+        const historyPage = await load(HISTORY_URL, true);
+        if (!loggedIn) {
+          status("Sessao expirada. Abra o login uma vez.");
+          return state;
+        }
+
+        const email = await fetchUserEmail(historyPage);
+        if (email) {
+          db.userEmail = email;
+          saveUserEmail(email);
+        }
       }
-      const historyUrl = await statistics.webContents.executeJavaScript(
-        `[...document.links].map(link => link.href).find(href => /match.*history|history.*match/i.test(href)) || ${JSON.stringify(HISTORY_URL)}`
-      );
-      await load(historyUrl, false);
+
       lastRun = new Date().toISOString();
-      status("Dados atualizados automaticamente.");
+      status("Dados updated automaticamente.");
     } catch (error) {
       status(`Falha na coleta: ${error.message}`);
     } finally {

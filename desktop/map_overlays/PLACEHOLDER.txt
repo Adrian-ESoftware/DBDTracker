@@ -1,0 +1,3 @@
+Coloque os arquivos PNG dos mapas de overlay nesta pasta.
+Exemplo: THE_THOMPSON_HOUSE.png, ROTTEN_FIELDS.png, etc.
+Eles serão empacotados diretamente no aplicativo executável.

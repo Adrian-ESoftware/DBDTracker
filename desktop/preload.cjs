@@ -9,5 +9,10 @@ contextBridge.exposeInMainWorld("dbd", {
   collectNow: () => ipcRenderer.invoke("collect-now"),
   clearLogin: () => ipcRenderer.invoke("clear-login"),
   collectorStatus: () => ipcRenderer.invoke("collector-status"),
-  onStatus: callback => ipcRenderer.on("collector-status", (_, value) => callback(value))
+  onStatus: callback => ipcRenderer.on("collector-status", (_, value) => callback(value)),
+  mapCheckStatus: () => ipcRenderer.invoke("map-check-status"),
+  onMapCheckEvent: callback => ipcRenderer.on("map-check-event", (_, value) => callback(value)),
+  getOverlaySettings: () => ipcRenderer.invoke("get-overlay-settings"),
+  saveOverlaySettings: settings => ipcRenderer.invoke("save-overlay-settings", settings),
+  showMapPreview: () => ipcRenderer.invoke("show-map-preview")
 });
