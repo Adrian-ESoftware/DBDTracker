@@ -36,83 +36,12 @@ const MAP_REGION_Y_END: f32 = 0.94;
 // O jogo exibe no formato: "REALM - MAP NAME" (PT-BR: "FAZENDA COLDWIND - CASA DOS THOMPSON")
 // A lista cobre ambos os idiomas para o fuzzy match funcionar independente do idioma do jogo.
 pub const DBD_MAPS: &[(&str, &str)] = &[
-    // MacMillan Estate
-    ("Shelter Woods", "SHELTER WOODS"),
-    ("Groaning Storehouse", "GROANING STOREHOUSE"),
-    ("Ironworks of Misery", "IRONWORKS OF MISERY"),
-    ("Suffocation Pit", "SUFFOCATION PIT"),
-    ("Coal Tower", "COAL TOWER"),
-    // Autohaven Wreckers
-    ("Azarov's Resting Place", "AZAROV'S RESTING PLACE"),
-    ("Blood Lodge", "BLOOD LODGE"),
-    ("Gas Heaven", "GAS HEAVEN"),
-    ("Wreckers' Yard", "WRECKERS' YARD"),
-    ("Autohaven Wreckers", "AUTOHAVEN WRECKERS"),
-    // Coldwind Farm
-    ("Thompson House", "THE THOMPSON HOUSE"),
-    ("Casa dos Thompson", "THE THOMPSON HOUSE"),
-    ("Rotten Fields", "ROTTEN FIELDS"),
-    ("Campos Podres", "ROTTEN FIELDS"),
-    ("Fractured Cowshed", "FRACTURED COWSHED"),
-    ("Curral Rachado", "FRACTURED COWSHED"),
-    ("Torment Creek", "TORMENT CREEK"),
-    ("Córrego do Tormento", "TORMENT CREEK"),
-    ("Rancid Abattoir", "RANCID ABATTOIR"),
-    ("Abatedouro Rançoso", "RANCID ABATTOIR"),
-    // Crotus Prenn Asylum
-    ("Disturbed Ward", "DISTURBED WARD"),
-    ("Father Campbell's Chapel", "FATHER CAMPBELL'S CHAPEL"),
-    // Backwater Swamp
-    ("The Pale Rose", "THE PALE ROSE"),
-    ("Grim Pantry", "GRIM PANTRY"),
-    // Léry's Memorial Institute
-    ("Treatment Theatre", "TREATMENT THEATRE"),
-    // Red Forest
-    ("Mother's Dwelling", "MOTHER'S DWELLING"),
-    ("Temple of Purgation", "THE TEMPLE OF PURGATION"),
-    // Haddonfield
-    ("Lampkin Lane", "LAMPKIN LANE"),
-    // Gideon Meat Plant
-    ("The Game", "THE GAME"),
-    // Yamaoka Estate
-    ("Family Residence", "FAMILY RESIDENCE"),
-    ("Sanctum of Wrath", "SANCTUM OF WRATH"),
-    // Ormond
-    ("Mount Ormond Resort", "MOUNT ORMOND RESORT"),
-    // Hawkins National Laboratory
-    ("The Underground Complex", "THE UNDERGROUND COMPLEX"),
-    // Grave of Glenvale
-    ("Dead Dawg Saloon", "DEAD DAWG SALOON"),
-    // Springwood
-    ("Badham Preschool I", "BADHAM PRESCHOOL I"),
-    ("Badham Preschool II", "BADHAM PRESCHOOL II"),
-    ("Badham Preschool III", "BADHAM PRESCHOOL III"),
-    ("Badham Preschool IV", "BADHAM PRESCHOOL IV"),
-    ("Badham Preschool V", "BADHAM PRESCHOOL V"),
-    // Silent Hill
-    ("Midwich Elementary School", "MIDWICH ELEMENTARY SCHOOL"),
-    // Raccoon City
-    ("Raccoon City Police Station", "RACCOON CITY POLICE STATION"),
-    // Forsaken Boneyard
-    ("Eyrie of Crows", "EYRIE OF CROWS"),
-    ("Garden of Joy", "GARDEN OF JOY"),
-    // Withered Isle
-    ("Greenville Square", "GREENVILLE SQUARE"),
-    // The Decimated Borgo
-    ("The Shattered Square", "THE SHATTERED SQUARE"),
-    ("Forgotten Ruins", "FORGOTTEN RUINS"),
-    // Dvarka Deepwood
-    ("Nostromo Wreckage", "NOSTROMO WRECKAGE"),
-    // Realm display names (PT-BR)
-    ("Fazenda Coldwind", "COLDWIND FARM"),
-    ("MacMillan", "MACMILLAN ESTATE"),
-    ("Autohaven", "AUTOHAVEN WRECKERS"),
-    ("Pântano de Backwater", "BACKWATER SWAMP"),
-    ("Instituto Memorial Léry", "LÉRY'S MEMORIAL INSTITUTE"),
-    ("Floresta Vermelha", "RED FOREST"),
-    ("Propriedade Yamaoka", "YAMAOKA ESTATE"),
-    ("Ilha Murcha", "WITHERED ISLE"),
-    ("Floresta de Dvarka - Pouso do lago toba", "DVARKA DEEPWOOD - TOBA LANDING"),
+    // BORGO
+    ("BORGO DIZIMADO - PRAÇA ARRASADA", "THE DECIMATED BORGO - THE SHATTERED SQUARE"),
+    ("BORGO DIZIMADO - RUÍNAS ESQUECIDAS", "THE DECIMATED BORGO - FORGOTTEN RUINS"),
+    // DVARKA
+    ("FLORESTA DE DVARKA - POUSO DO LAGO TOBA", "DVARKA DEEPWOOD - TOBA LANDING"),
+    ("FLORESTA DE DVARKA - DESTROÇOS DA NOSTROMO", "DVARKA DEEPWOOD - NOSTROMO WRECKAGE"),
 ];
 
 // ── Resultado da detecção ─────────────────────────────────────────────────────
