@@ -309,6 +309,13 @@ h2:first-child{margin-top:2px}
             <input type="checkbox" id="setting-map-check-enabled" style="accent-color:var(--red); cursor:pointer; width:14px; height:14px;">
           </div>
           <div style="display:flex; align-items:center; justify-content:space-between; font-size:10px;">
+            <span style="color:var(--muted)">Idioma do Jogo:</span>
+            <select id="setting-map-check-language" style="background:#1c222b; border:1px solid #313a46; color:#dce0e6; border-radius:4px; padding:2px 4px; font-size:10px; outline:none; cursor:pointer;">
+              <option value="pt-br">Português (BR)</option>
+              <option value="en-us">English (US)</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:space-between; font-size:10px;">
             <span style="color:var(--muted)">Canto do Overlay:</span>
             <select id="setting-overlay-corner" style="background:#1c222b; border:1px solid #313a46; color:#dce0e6; border-radius:4px; padding:2px 4px; font-size:10px; outline:none; cursor:pointer;">
               <option value="top-left">Superior Esquerdo</option>
@@ -755,7 +762,7 @@ window.dbd.onMapCheckEvent(function(event) {
   
   switch (event.type) {
     case 'ready':
-      updateMapCheckStatusUI({ status: 'ready', monitor: event.monitor });
+      updateMapCheckStatusUI({ status: 'ready', monitor: event.monitor, catalog: event.map_catalog });
       break;
       
     case 'disabled':
@@ -771,6 +778,7 @@ window.dbd.onMapCheckEvent(function(event) {
       
     case 'capture_error':
     case 'listener_error':
+    case 'map_catalog_error':
       updateMapCheckStatusUI({ status: 'error', error: event.error });
       showMapBanner('⚠️ Erro no Detector', 'Falha na captura ou teclado', event.error || '', true);
       break;
@@ -791,6 +799,7 @@ function initOverlaySettings() {
     $('setting-overlay-opacity').value = settings.overlayOpacity || 70;
     $('setting-overlay-size').value = settings.overlaySize || 350;
     $('setting-map-check-enabled').checked = settings.mapCheckEnabled !== false;
+    $('setting-map-check-language').value = settings.mapCheckLanguage || 'pt-br';
     
     // Update displays
     $('display-overlay-opacity').textContent = (settings.overlayOpacity || 70) + '%';
@@ -803,6 +812,7 @@ function saveOverlaySettings() {
   var opacity = parseInt($('setting-overlay-opacity').value, 10) || 70;
   var size = parseInt($('setting-overlay-size').value, 10) || 350;
   var enabled = $('setting-map-check-enabled').checked;
+  var language = $('setting-map-check-language').value || 'pt-br';
   
   // Update displays in real-time
   $('display-overlay-opacity').textContent = opacity + '%';
@@ -812,7 +822,8 @@ function saveOverlaySettings() {
     overlayCorner: corner,
     overlayOpacity: opacity,
     overlaySize: size,
-    mapCheckEnabled: enabled
+    mapCheckEnabled: enabled,
+    mapCheckLanguage: language
   }).then(function(settings) {
     console.log('[Overlay] Configurações salvas:', settings);
   });
@@ -822,6 +833,7 @@ $('setting-overlay-corner').onchange = saveOverlaySettings;
 $('setting-overlay-opacity').oninput = saveOverlaySettings;
 $('setting-overlay-size').oninput = saveOverlaySettings;
 $('setting-map-check-enabled').onchange = saveOverlaySettings;
+$('setting-map-check-language').onchange = saveOverlaySettings;
 $('btn-show-preview').onclick = function() {
   window.dbd.showMapPreview();
 };

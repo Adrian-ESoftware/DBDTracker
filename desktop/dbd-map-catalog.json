@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "maps": [
+    {
+      "realm_id": "THE_DECIMATED_BORGO",
+      "realm": {
+        "pt-br": ["BORGO DIZIMADO"],
+        "en-us": ["THE DECIMATED BORGO"]
+      },
+      "variations": [
+        {
+          "id": "THE_SHATTERED_SQUARE",
+          "canonical": "THE DECIMATED BORGO - THE SHATTERED SQUARE",
+          "aliases": {
+            "pt-br": ["PRA\u00c7A ARRASADA"],
+            "en-us": ["THE SHATTERED SQUARE"]
+          }
+        },
+        {
+          "id": "FORGOTTEN_RUINS",
+          "canonical": "THE DECIMATED BORGO - FORGOTTEN RUINS",
+          "aliases": {
+            "pt-br": ["RU\u00cdNAS ESQUECIDAS"],
+            "en-us": ["FORGOTTEN RUINS"]
+          }
+        }
+      ]
+    },
+    {
+      "realm_id": "DVARKA_DEEPWOOD",
+      "realm": {
+        "pt-br": ["FLORESTA DE DVARKA"],
+        "en-us": ["DVARKA DEEPWOOD"]
+      },
+      "variations": [
+        {
+          "id": "TOBA_LANDING",
+          "canonical": "DVARKA DEEPWOOD - TOBA LANDING",
+          "aliases": {
+            "pt-br": ["POUSO DO LAGO TOBA"],
+            "en-us": ["TOBA LANDING"]
+          }
+        },
+        {
+          "id": "NOSTROMO_WRECKAGE",
+          "canonical": "DVARKA DEEPWOOD - NOSTROMO WRECKAGE",
+          "aliases": {
+            "pt-br": ["DESTRO\u00c7OS DA NOSTROMO"],
+            "en-us": ["NOSTROMO WRECKAGE"]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -45,6 +45,8 @@ Para Electron, use:
 map-check.exe --json
 ```
 
+Para enviar a lista de mapas pelo Electron, use `--maps-json` junto com `--json`. Se souber o idioma do jogo, passe tambem `--lang`, por exemplo `--lang pt-br`. O formato e o fluxo de atualizacao estao em [ELECTRON_MAP_CATALOG.md](ELECTRON_MAP_CATALOG.md).
+
 Tambem existe um modo humano para debug:
 
 ```powershell
@@ -67,10 +69,14 @@ const mapCheckPath = path.join(
   "map-check.exe"
 );
 
-const mapCheck = spawn(mapCheckPath, ["--json"], {
+const mapCheck = spawn(
+  mapCheckPath,
+  ["--json", "--lang", "pt-br", "--maps-json", JSON.stringify(mapCatalog)],
+  {
   windowsHide: true,
   stdio: ["ignore", "pipe", "pipe"],
-});
+  }
+);
 ```
 
 `windowsHide: true` evita janela de console quando aplicavel. O binario de release tambem foi compilado com subsystem Windows, entao ele nao abre terminal.
@@ -113,6 +119,10 @@ function handleMapCheckEvent(event) {
       console.log("map-check pronto", event);
       break;
 
+    case "map_catalog_error":
+      console.error("Catalogo de mapas invalido:", event.error);
+      break;
+
     case "map_detected":
       console.log("Mapa atual:", event.map, event.confidence);
       // Envie para a janela/overlay:
@@ -147,7 +157,27 @@ Emitido quando o OCR e o worker de captura estao prontos.
     "height": 1080
   },
   "capture_preference": "dbd_window",
-  "fallback": "monitor"
+  "fallback": "monitor",
+  "map_catalog": {
+    "source": "argv_json",
+    "schema": "structured",
+    "count": 128,
+    "language": "pt-br",
+    "fallback_language": "en-us"
+  }
+}
+```
+
+`map_catalog.source` sera `argv_json` quando o catalogo foi carregado. `map_catalog.schema` pode ser `structured` ou `legacy_pairs`.
+
+### `map_catalog_error`
+
+Emitido quando `--maps-json` nao foi informado ou quando o JSON enviado nao pode ser carregado. O processo encerra com codigo `2`.
+
+```json
+{
+  "type": "map_catalog_error",
+  "error": "--maps-json e obrigatorio"
 }
 ```
 
@@ -159,6 +189,8 @@ Emitido quando um mapa e reconhecido.
 {
   "type": "map_detected",
   "map": "THE THOMPSON HOUSE",
+  "map_id": "THE_THOMPSON_HOUSE",
+  "realm_id": "COLDWIND_FARM",
   "confidence": 0.92,
   "raw_ocr_text": "FAZENDA COLDWIND - CASA DOS THOMPSON",
   "capture_source": "dbd_window",
@@ -195,6 +227,8 @@ Emitido quando o OCR rodou, mas o mapa nao foi identificado.
       {
         "candidate": "Thompson House",
         "canonical": "THE THOMPSON HOUSE",
+        "map_id": "THE_THOMPSON_HOUSE",
+        "realm_id": "COLDWIND_FARM",
         "score": 0.48,
         "map_part_score": 0.48,
         "full_text_score": 0.42
@@ -213,6 +247,7 @@ Possiveis tipos:
 - `capture_error`
 - `ocr_error`
 - `listener_error`
+- `map_catalog_error`
 
 Exemplo:
 
@@ -265,5 +300,7 @@ app.on("before-quit", () => {
 - O `map-check` so detecta quando o jogador pressiona `TAB`.
 - A captura tenta primeiro a janela do DBD e cai para monitor se falhar.
 - O modo JSON deve ser tratado como API interna entre Rust e Electron.
+- Para atualizar mapas sem recompilar o Rust, passe o catalogo via `--maps-json`.
+- Para melhorar precisao do fuzzy, passe o idioma do jogo via `--lang`; sem isso, o padrao e `en-us`.
 - Nao use `target-cpu=native` para o binario distribuido.
 - Para debug local, rode `map-check.exe --dev` em um terminal.

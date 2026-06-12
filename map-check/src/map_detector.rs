@@ -35,14 +35,37 @@ const MAP_REGION_Y_END: f32 = 0.94;
 //
 // O jogo exibe no formato: "REALM - MAP NAME" (PT-BR: "FAZENDA COLDWIND - CASA DOS THOMPSON")
 // A lista cobre ambos os idiomas para o fuzzy match funcionar independente do idioma do jogo.
-pub const DBD_MAPS: &[(&str, &str)] = &[
+#[cfg(any())]
+const _RETIRED_HARDCODED_MAPS: &[(&str, &str)] = &[
     // BORGO
-    ("BORGO DIZIMADO - PRAÇA ARRASADA", "THE DECIMATED BORGO - THE SHATTERED SQUARE"),
-    ("BORGO DIZIMADO - RUÍNAS ESQUECIDAS", "THE DECIMATED BORGO - FORGOTTEN RUINS"),
+    (
+        "BORGO DIZIMADO - PRAÇA ARRASADA",
+        "THE DECIMATED BORGO - THE SHATTERED SQUARE",
+    ),
+    (
+        "BORGO DIZIMADO - RUÍNAS ESQUECIDAS",
+        "THE DECIMATED BORGO - FORGOTTEN RUINS",
+    ),
     // DVARKA
-    ("FLORESTA DE DVARKA - POUSO DO LAGO TOBA", "DVARKA DEEPWOOD - TOBA LANDING"),
-    ("FLORESTA DE DVARKA - DESTROÇOS DA NOSTROMO", "DVARKA DEEPWOOD - NOSTROMO WRECKAGE"),
+    (
+        "FLORESTA DE DVARKA - POUSO DO LAGO TOBA",
+        "DVARKA DEEPWOOD - TOBA LANDING",
+    ),
+    (
+        "FLORESTA DE DVARKA - DESTROÇOS DA NOSTROMO",
+        "DVARKA DEEPWOOD - NOSTROMO WRECKAGE",
+    ),
 ];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapCandidate {
+    pub candidate: String,
+    pub canonical: String,
+    pub map_id: Option<String>,
+    pub realm_id: Option<String>,
+}
+
+pub type MapCatalog = Vec<MapCandidate>;
 
 // ── Resultado da detecção ─────────────────────────────────────────────────────
 #[derive(Debug, Clone)]
@@ -53,6 +76,8 @@ pub struct MapDetectionResult {
     pub raw_ocr_text: String,
     /// Score de confiança do fuzzy match (0.0–1.0)
     pub confidence: f32,
+    pub map_id: Option<String>,
+    pub realm_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +99,8 @@ pub struct MapDetectionDiagnostic {
 pub struct FuzzyCandidate {
     pub candidate: String,
     pub canonical: String,
+    pub map_id: Option<String>,
+    pub realm_id: Option<String>,
     pub score: f32,
     pub map_part_score: f32,
     pub full_text_score: f32,
@@ -82,11 +109,16 @@ pub struct FuzzyCandidate {
 // ── Motor de OCR (lazy-initialized, reuse entre frames) ──────────────────────
 pub struct DbdMapDetector {
     engine: OcrEngine,
+    maps: MapCatalog,
 }
 
 impl DbdMapDetector {
     /// Inicializa o motor uma vez. Chame no startup da aplicação.
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new_with_maps(maps: MapCatalog) -> anyhow::Result<Self> {
+        if maps.is_empty() {
+            anyhow::bail!("Catalogo de mapas vazio");
+        }
+
         let detection_model = rten::Model::load(DETECTION_MODEL.to_vec())?;
         let recognition_model = rten::Model::load(RECOGNITION_MODEL.to_vec())?;
 
@@ -96,7 +128,11 @@ impl DbdMapDetector {
             ..Default::default()
         })?;
 
-        Ok(Self { engine })
+        Ok(Self { engine, maps })
+    }
+
+    pub fn map_count(&self) -> usize {
+        self.maps.len()
     }
 
     /// Detecta o mapa a partir de uma screenshot do tab screen.
@@ -151,13 +187,15 @@ impl DbdMapDetector {
         }
 
         // 4. Fuzzy match contra a lista de mapas conhecidos
-        let diagnostic = fuzzy_diagnostic(&raw_text);
+        let diagnostic = fuzzy_diagnostic(&raw_text, &self.maps);
         let result = diagnostic.candidates.first().and_then(|candidate| {
             if candidate.score > diagnostic.threshold {
                 Some(MapDetectionResult {
                     map_name: candidate.canonical.clone(),
                     raw_ocr_text: raw_text.clone(),
                     confidence: candidate.score,
+                    map_id: candidate.map_id.clone(),
+                    realm_id: candidate.realm_id.clone(),
                 })
             } else {
                 None
@@ -202,35 +240,40 @@ fn preprocess_for_ocr(img: &DynamicImage) -> image::RgbImage {
     rgb
 }
 
-/// Fuzzy match: encontra o mapa mais próximo na lista DBD_MAPS.
+/// Fuzzy match: encontra o mapa mais proximo no catalogo informado pelo Electron.
 ///
 /// Estratégia:
 /// 1. Tenta casar apenas a parte depois do " - " (nome do mapa) — peso maior.
 /// 2. Tenta casar o texto completo (inclui realm) — peso menor.
 /// 3. Substring match exato: bônus proporcional ao tamanho do candidato.
 /// 4. Fallback: distância de Levenshtein em janela deslizante.
-#[allow(dead_code)]
-fn fuzzy_match_map(ocr_text: &str) -> Option<(String, f32)> {
+#[cfg(test)]
+fn fuzzy_match_map_in_catalog(ocr_text: &str, maps: &[MapCandidate]) -> Option<(String, f32)> {
     let mut best_name = String::new();
     let mut best_score: f32 = 0.0;
+    let normalized_ocr_text = normalize_for_fuzzy(ocr_text);
 
     // Separa o texto em "REALM" e "MAP NAME" se houver " - "
-    let map_part = ocr_text.split(" - ").last().unwrap_or(ocr_text).trim();
+    let map_part = normalized_ocr_text
+        .split(" - ")
+        .last()
+        .unwrap_or(&normalized_ocr_text)
+        .trim();
 
-    for (candidate, canonical) in DBD_MAPS {
-        let candidate_upper = candidate.to_uppercase();
+    for map in maps {
+        let candidate_normalized = normalize_for_fuzzy(&map.candidate);
 
         // Tenta casar primeiro contra a parte do mapa (mais específica)
-        let score_map = substring_score(map_part, &candidate_upper);
+        let score_map = substring_score(map_part, &candidate_normalized);
         // Depois contra o texto completo (fallback para realms)
-        let score_full = substring_score(ocr_text, &candidate_upper);
+        let score_full = substring_score(&normalized_ocr_text, &candidate_normalized);
 
         // A parte do mapa tem peso maior (×1.0) que o texto completo (×0.85)
         let score = score_map.max(score_full * 0.85);
 
         if score > best_score && score > 0.6 {
             best_score = score;
-            best_name = canonical.to_string();
+            best_name = map.canonical.clone();
         }
     }
 
@@ -241,20 +284,28 @@ fn fuzzy_match_map(ocr_text: &str) -> Option<(String, f32)> {
     }
 }
 
-fn fuzzy_diagnostic(ocr_text: &str) -> MapDetectionDiagnostic {
+fn fuzzy_diagnostic(ocr_text: &str, maps: &[MapCandidate]) -> MapDetectionDiagnostic {
     let threshold = 0.6;
+    let normalized_ocr_text = normalize_for_fuzzy(ocr_text);
+    let normalized_map_part = normalized_ocr_text
+        .split(" - ")
+        .last()
+        .unwrap_or(&normalized_ocr_text)
+        .trim();
     let map_part = ocr_text.split(" - ").last().unwrap_or(ocr_text).trim();
-    let mut candidates: Vec<FuzzyCandidate> = DBD_MAPS
+    let mut candidates: Vec<FuzzyCandidate> = maps
         .iter()
-        .map(|(candidate, canonical)| {
-            let candidate_upper = candidate.to_uppercase();
-            let map_part_score = substring_score(map_part, &candidate_upper);
-            let full_text_score = substring_score(ocr_text, &candidate_upper);
+        .map(|map| {
+            let candidate_normalized = normalize_for_fuzzy(&map.candidate);
+            let map_part_score = substring_score(normalized_map_part, &candidate_normalized);
+            let full_text_score = substring_score(&normalized_ocr_text, &candidate_normalized);
             let score = map_part_score.max(full_text_score * 0.85);
 
             FuzzyCandidate {
-                candidate: candidate.to_string(),
-                canonical: canonical.to_string(),
+                candidate: map.candidate.clone(),
+                canonical: map.canonical.clone(),
+                map_id: map.map_id.clone(),
+                realm_id: map.realm_id.clone(),
                 score,
                 map_part_score,
                 full_text_score,
@@ -286,6 +337,29 @@ fn fuzzy_diagnostic(ocr_text: &str) -> MapDetectionDiagnostic {
         reason,
         candidates,
     }
+}
+
+fn normalize_for_fuzzy(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+
+    for ch in value.chars() {
+        match ch {
+            'á' | 'à' | 'â' | 'ã' | 'ä' | 'å' | 'Á' | 'À' | 'Â' | 'Ã' | 'Ä' | 'Å' => {
+                normalized.push('A')
+            }
+            'é' | 'è' | 'ê' | 'ë' | 'É' | 'È' | 'Ê' | 'Ë' => normalized.push('E'),
+            'í' | 'ì' | 'î' | 'ï' | 'Í' | 'Ì' | 'Î' | 'Ï' => normalized.push('I'),
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' | 'Ó' | 'Ò' | 'Ô' | 'Õ' | 'Ö' => {
+                normalized.push('O')
+            }
+            'ú' | 'ù' | 'û' | 'ü' | 'Ú' | 'Ù' | 'Û' | 'Ü' => normalized.push('U'),
+            'ç' | 'Ç' => normalized.push('C'),
+            'ñ' | 'Ñ' => normalized.push('N'),
+            _ => normalized.extend(ch.to_uppercase()),
+        }
+    }
+
+    normalized
 }
 
 /// Calcula o score de similaridade entre um texto OCR e um candidato.
@@ -370,9 +444,28 @@ fn levenshtein_similarity(a: &str, b: &str) -> f32 {
 mod tests {
     use super::*;
 
+    fn map_candidate(candidate: &str, canonical: &str) -> MapCandidate {
+        MapCandidate {
+            candidate: candidate.to_string(),
+            canonical: canonical.to_string(),
+            map_id: None,
+            realm_id: None,
+        }
+    }
+
+    fn test_catalog() -> MapCatalog {
+        vec![
+            map_candidate("FAZENDA COLDWIND - CASA DOS THOMPSON", "THE THOMPSON HOUSE"),
+            map_candidate("COLDWIND FARM - ROTTEN FIELDS", "ROTTEN FIELDS"),
+            map_candidate("ROTTEN FIELDS", "ROTTEN FIELDS"),
+            map_candidate("COLDWIND FARM - IRONWORKS OF MISERY", "IRONWORKS OF MISERY"),
+        ]
+    }
+
     #[test]
     fn test_fuzzy_match_exact() {
-        let result = fuzzy_match_map("FAZENDA COLDWIND - CASA DOS THOMPSON");
+        let result =
+            fuzzy_match_map_in_catalog("FAZENDA COLDWIND - CASA DOS THOMPSON", &test_catalog());
         assert!(result.is_some());
         let (name, score) = result.unwrap();
         assert_eq!(name, "THE THOMPSON HOUSE");
@@ -382,7 +475,8 @@ mod tests {
     #[test]
     fn test_fuzzy_match_with_ocr_noise() {
         // Simula OCR com pequenos erros
-        let result = fuzzy_match_map("FAZENDA COLDW1ND - ROTTEN FIEL0S MD22");
+        let result =
+            fuzzy_match_map_in_catalog("FAZENDA COLDW1ND - ROTTEN FIEL0S MD22", &test_catalog());
         assert!(result.is_some());
         let (name, _) = result.unwrap();
         assert_eq!(name, "ROTTEN FIELDS");
@@ -390,16 +484,40 @@ mod tests {
 
     #[test]
     fn test_fuzzy_match_english() {
-        let result = fuzzy_match_map("COLDWIND FARM - IRONWORKS OF MISERY");
+        let result =
+            fuzzy_match_map_in_catalog("COLDWIND FARM - IRONWORKS OF MISERY", &test_catalog());
         assert!(result.is_some());
         let (name, _) = result.unwrap();
         assert_eq!(name, "IRONWORKS OF MISERY");
     }
 
     #[test]
+    fn test_fuzzy_match_ignores_diacritics() {
+        let catalog = vec![map_candidate(
+            "DESTROÇOS DA NOSTROMO",
+            "DVARKA DEEPWOOD - NOSTROMO WRECKAGE",
+        )];
+
+        let result =
+            fuzzy_match_map_in_catalog("FLORESTA DE DVARKA - DESTROCOS DA NOSTROMO", &catalog);
+        assert!(result.is_some());
+        let (name, score) = result.unwrap();
+        assert_eq!(name, "DVARKA DEEPWOOD - NOSTROMO WRECKAGE");
+        assert!(score > 0.9, "score foi {score}");
+    }
+
+    #[test]
     fn test_no_match_garbage() {
-        let result = fuzzy_match_map("XYZXYZXYZ QQQQ 999");
+        let result = fuzzy_match_map_in_catalog("XYZXYZXYZ QQQQ 999", &test_catalog());
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_normalize_for_fuzzy_removes_common_diacritics() {
+        assert_eq!(
+            normalize_for_fuzzy("Praça Ruínas Destroços"),
+            "PRACA RUINAS DESTROCOS"
+        );
     }
 
     #[test]

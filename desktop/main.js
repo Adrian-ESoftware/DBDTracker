@@ -90,7 +90,8 @@ let mapCheckBuffer = "";
 let mapCheckStatus = { status: "initializing", monitor: null };
 let mapOverlayWindow = null;
 const mapOverlaysPath = join(import.meta.dirname, "map_overlays");
-let userConfig = { overlayCorner: "top-right", overlayOpacity: 70, overlaySize: 350, mapCheckEnabled: true };
+const mapCatalogPath = join(import.meta.dirname, "dbd-map-catalog.json");
+let userConfig = { overlayCorner: "top-right", overlayOpacity: 70, overlaySize: 350, mapCheckEnabled: true, mapCheckLanguage: "pt-br" };
 
 function loadUserConfig() {
   try {
@@ -111,6 +112,20 @@ function saveUserConfig() {
   } catch (err) {
     console.error("[Main] Error saving config:", err);
   }
+}
+
+function loadMapCheckCatalog() {
+  if (!existsSync(mapCatalogPath)) {
+    throw new Error(`Catálogo de mapas não encontrado: ${mapCatalogPath}`);
+  }
+
+  const catalogText = readFileSync(mapCatalogPath, "utf-8");
+  const catalog = JSON.parse(catalogText);
+  if (!catalog || !Array.isArray(catalog.maps) || catalog.maps.length === 0) {
+    throw new Error("Catálogo de mapas vazio ou inválido");
+  }
+
+  return JSON.stringify(catalog);
 }
 
 function createWindow() {
@@ -194,9 +209,23 @@ function startMapCheck() {
     return;
   }
 
+  let mapCatalogJson;
+  try {
+    mapCatalogJson = loadMapCheckCatalog();
+  } catch (err) {
+    console.error("[Main] map-check catalog error:", err);
+    mapCheckStatus = { status: "error", error: err.message };
+    if (window && !window.isDestroyed()) {
+      window.webContents.send("map-check-event", { type: "map_catalog_error", error: err.message });
+    }
+    return;
+  }
+
+  const mapCheckLanguage = userConfig.mapCheckLanguage || "pt-br";
+  const mapCheckArgs = ["--json", "--lang", mapCheckLanguage, "--maps-json", mapCatalogJson];
   console.log(`[Main] Spawning map-check from: ${mapCheckPath}`);
   try {
-    mapCheckProcess = spawn(mapCheckPath, ["--json"], {
+    mapCheckProcess = spawn(mapCheckPath, mapCheckArgs, {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -233,7 +262,9 @@ function startMapCheck() {
     mapCheckProcess.on("close", code => {
       console.log(`[Main] map-check process exited with code ${code}`);
       mapCheckProcess = null;
-      mapCheckStatus = { status: "error", error: `Processo encerrado (${code})` };
+      if (mapCheckStatus.status !== "error") {
+        mapCheckStatus = { status: "error", error: `Processo encerrado (${code})` };
+      }
     });
   } catch (err) {
     console.error("[Main] Error starting map-check child process:", err);
@@ -243,9 +274,9 @@ function startMapCheck() {
 
 function handleMapCheckEvent(event) {
   if (event.type === "ready") {
-    mapCheckStatus = { status: "ready", monitor: event.monitor };
-  } else if (event.type === "listener_error" || event.type === "capture_error" || event.type === "ocr_error") {
-    mapCheckStatus.error = event.error;
+    mapCheckStatus = { status: "ready", monitor: event.monitor, catalog: event.map_catalog };
+  } else if (event.type === "listener_error" || event.type === "capture_error" || event.type === "ocr_error" || event.type === "map_catalog_error") {
+    mapCheckStatus = { ...mapCheckStatus, status: "error", error: event.error };
   } else if (event.type === "map_detected" && event.map) {
     const imgFileName = event.map.replace(/ /g, "_") + ".png";
     const filePath = join(mapOverlaysPath, imgFileName);
@@ -467,6 +498,7 @@ ipcMain.handle("get-overlay-settings", () => {
 ipcMain.handle("save-overlay-settings", (_, settings) => {
   loadUserConfig();
   const oldEnabled = userConfig.mapCheckEnabled !== false;
+  const oldLanguage = userConfig.mapCheckLanguage || "pt-br";
   userConfig = { ...userConfig, ...settings };
   saveUserConfig();
   if (mapOverlayWindow && !mapOverlayWindow.isDestroyed()) {
@@ -479,6 +511,11 @@ ipcMain.handle("save-overlay-settings", (_, settings) => {
     } else {
       stopMapCheck();
     }
+  }
+  const newLanguage = userConfig.mapCheckLanguage || "pt-br";
+  if (oldEnabled && newEnabled && oldLanguage !== newLanguage) {
+    stopMapCheck();
+    startMapCheck();
   }
   return {
     ...userConfig,

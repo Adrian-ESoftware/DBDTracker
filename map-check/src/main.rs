@@ -8,9 +8,11 @@
 )]
 
 mod map_detector;
-use map_detector::DbdMapDetector;
+use map_detector::{DbdMapDetector, MapCandidate, MapCatalog};
 
 use rdev::{Event, EventType, Key, listen};
+use serde_json::Value;
+use std::collections::HashSet;
 use std::env;
 use std::io::{self, Write};
 use std::process;
@@ -23,6 +25,8 @@ use std::time::{Duration, Instant};
 static DETECTOR: OnceLock<DbdMapDetector> = OnceLock::new();
 static PRIMARY_MONITOR: OnceLock<PrimaryMonitorInfo> = OnceLock::new();
 static CAPTURE_WORKER: OnceLock<CaptureWorker> = OnceLock::new();
+const DEFAULT_LANG: &str = "en-us";
+const FALLBACK_LANG: &str = "en-us";
 
 struct PrimaryMonitorInfo {
     index: usize,
@@ -62,49 +66,342 @@ impl CaptureSource {
     }
 }
 
+#[derive(Debug)]
+struct MapCatalogStatus {
+    source: &'static str,
+    schema: &'static str,
+    count: usize,
+    language: String,
+    fallback_language: &'static str,
+}
+
+#[derive(Debug)]
+struct MapCatalogLoad {
+    maps: MapCatalog,
+    status: MapCatalogStatus,
+}
+
+fn load_map_catalog(maps_json: Option<&str>, language: &str) -> anyhow::Result<MapCatalogLoad> {
+    let language = normalize_lang(language);
+    let json = maps_json.ok_or_else(|| anyhow::anyhow!("--maps-json e obrigatorio"))?;
+    let (maps, schema) = parse_maps_json(json, &language)?;
+    let count = maps.len();
+
+    Ok(MapCatalogLoad {
+        maps,
+        status: MapCatalogStatus {
+            source: "argv_json",
+            schema,
+            count,
+            language,
+            fallback_language: FALLBACK_LANG,
+        },
+    })
+}
+
+fn parse_maps_json(json: &str, language: &str) -> anyhow::Result<(MapCatalog, &'static str)> {
+    let value: Value = serde_json::from_str(json)?;
+    match value {
+        Value::Array(rows) => Ok((parse_legacy_map_catalog(&rows)?, "legacy_pairs")),
+        Value::Object(_) => Ok((
+            parse_structured_map_catalog(&value, language)?,
+            "structured",
+        )),
+        _ => anyhow::bail!("catalogo precisa ser array de pares ou objeto estruturado"),
+    }
+}
+
+fn parse_legacy_map_catalog(rows: &[Value]) -> anyhow::Result<MapCatalog> {
+    let mut maps = Vec::with_capacity(rows.len());
+
+    for (index, row) in rows.iter().enumerate() {
+        let row = row
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("item #{index} precisa ser array"))?;
+        if row.len() != 2 {
+            anyhow::bail!("item #{index} precisa ter exatamente 2 strings");
+        }
+
+        let candidate = value_as_non_empty_str(&row[0], "candidate", index)?;
+        let canonical = value_as_non_empty_str(&row[1], "canonical", index)?;
+        maps.push(MapCandidate {
+            candidate,
+            canonical,
+            map_id: None,
+            realm_id: None,
+        });
+    }
+
+    ensure_catalog_not_empty(maps)
+}
+
+fn parse_structured_map_catalog(value: &Value, language: &str) -> anyhow::Result<MapCatalog> {
+    let maps_value = value
+        .get("maps")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("catalogo estruturado precisa de maps[]"))?;
+
+    let languages = language_chain(language);
+    let mut catalog = Vec::new();
+    let mut seen = HashSet::new();
+
+    for (realm_index, realm_value) in maps_value.iter().enumerate() {
+        let realm = realm_value
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("maps[{realm_index}] precisa ser objeto"))?;
+        let realm_id = string_field(realm_value, "realm_id")
+            .or_else(|| string_field(realm_value, "id"))
+            .unwrap_or_else(|| format!("REALM_{realm_index}"));
+        let realm_aliases = realm.get("realm");
+        let variations = realm
+            .get("variations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("maps[{realm_index}] precisa de variations[]"))?;
+
+        for (variation_index, variation_value) in variations.iter().enumerate() {
+            let map_id = string_field(variation_value, "id").ok_or_else(|| {
+                anyhow::anyhow!("maps[{realm_index}].variations[{variation_index}].id ausente")
+            })?;
+            let canonical = string_field(variation_value, "canonical").ok_or_else(|| {
+                anyhow::anyhow!(
+                    "maps[{realm_index}].variations[{variation_index}].canonical ausente"
+                )
+            })?;
+            let aliases = variation_value.get("aliases").ok_or_else(|| {
+                anyhow::anyhow!("maps[{realm_index}].variations[{variation_index}].aliases ausente")
+            })?;
+
+            for lang in &languages {
+                let variation_aliases = aliases_for_lang(aliases, lang);
+                let realm_aliases = realm_aliases
+                    .map(|aliases| aliases_for_lang(aliases, lang))
+                    .unwrap_or_default();
+
+                for alias in &variation_aliases {
+                    push_map_candidate(
+                        &mut catalog,
+                        &mut seen,
+                        alias,
+                        &canonical,
+                        &map_id,
+                        &realm_id,
+                    );
+
+                    for realm_alias in &realm_aliases {
+                        push_map_candidate(
+                            &mut catalog,
+                            &mut seen,
+                            &format!("{realm_alias} - {alias}"),
+                            &canonical,
+                            &map_id,
+                            &realm_id,
+                        );
+                    }
+                }
+            }
+
+            push_map_candidate(
+                &mut catalog,
+                &mut seen,
+                &canonical,
+                &canonical,
+                &map_id,
+                &realm_id,
+            );
+        }
+    }
+
+    ensure_catalog_not_empty(catalog)
+}
+
+fn push_map_candidate(
+    catalog: &mut MapCatalog,
+    seen: &mut HashSet<String>,
+    candidate: &str,
+    canonical: &str,
+    map_id: &str,
+    realm_id: &str,
+) {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return;
+    }
+
+    let key = format!(
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        candidate.to_uppercase(),
+        canonical,
+        map_id,
+        realm_id
+    );
+    if seen.insert(key) {
+        catalog.push(MapCandidate {
+            candidate: candidate.to_string(),
+            canonical: canonical.to_string(),
+            map_id: Some(map_id.to_string()),
+            realm_id: Some(realm_id.to_string()),
+        });
+    }
+}
+
+fn aliases_for_lang(value: &Value, language: &str) -> Vec<String> {
+    value
+        .get(language)
+        .or_else(|| value.get(&normalize_lang(language)))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn language_chain(language: &str) -> Vec<String> {
+    let language = normalize_lang(language);
+    if language == FALLBACK_LANG {
+        vec![language]
+    } else {
+        vec![language, FALLBACK_LANG.to_string()]
+    }
+}
+
+fn normalize_lang(language: &str) -> String {
+    let language = language.trim().to_ascii_lowercase().replace('_', "-");
+    if language.is_empty() {
+        DEFAULT_LANG.to_string()
+    } else {
+        language
+    }
+}
+
+fn string_field(value: &Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn value_as_non_empty_str(value: &Value, field: &str, index: usize) -> anyhow::Result<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("item #{index} tem {field} vazio ou invalido"))
+}
+
+fn ensure_catalog_not_empty(maps: MapCatalog) -> anyhow::Result<MapCatalog> {
+    if maps.is_empty() {
+        anyhow::bail!("catalogo vazio");
+    }
+
+    Ok(maps)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OutputMode {
     Json,
     Dev,
 }
 
-impl OutputMode {
-    fn from_args() -> Self {
-        let mut mode = if cfg!(debug_assertions) {
-            Self::Dev
-        } else {
-            Self::Json
-        };
+struct CliConfig {
+    output: OutputMode,
+    maps_json: Option<String>,
+    language: String,
+}
 
-        for arg in env::args().skip(1) {
+impl CliConfig {
+    fn from_args() -> Self {
+        let mut output = if cfg!(debug_assertions) {
+            OutputMode::Dev
+        } else {
+            OutputMode::Json
+        };
+        let mut maps_json = None;
+        let mut language = DEFAULT_LANG.to_string();
+        let mut args = env::args().skip(1);
+
+        while let Some(arg) = args.next() {
             match arg.as_str() {
-                "--json" | "--electron" => mode = Self::Json,
-                "--dev" | "--human" => mode = Self::Dev,
+                "--json" | "--electron" => output = OutputMode::Json,
+                "--dev" | "--human" => output = OutputMode::Dev,
+                "--maps-json" => {
+                    maps_json = Some(args.next().unwrap_or_default());
+                }
+                "--lang" | "--language" => {
+                    language = normalize_lang(&args.next().unwrap_or_default());
+                }
                 _ => {}
+            }
+
+            if let Some(value) = arg.strip_prefix("--maps-json=") {
+                maps_json = Some(value.to_string());
+            }
+            if let Some(value) = arg.strip_prefix("--lang=") {
+                language = normalize_lang(value);
+            }
+            if let Some(value) = arg.strip_prefix("--language=") {
+                language = normalize_lang(value);
             }
         }
 
-        mode
+        Self {
+            output,
+            maps_json,
+            language,
+        }
     }
+}
 
+impl OutputMode {
     fn is_dev(self) -> bool {
         self == Self::Dev
     }
 
-    fn emit_ready(self, monitor: &PrimaryMonitorInfo) {
+    fn emit_ready(self, monitor: &PrimaryMonitorInfo, catalog: &MapCatalogStatus) {
         match self {
             Self::Dev => {
                 println!(
                     "   Monitor primario: {} ({}x{}).",
                     monitor.name, monitor.width, monitor.height,
                 );
+                println!(
+                    "   Catalogo de mapas: {} entradas ({} / {}, lang {}, fallback {})",
+                    catalog.count,
+                    catalog.source,
+                    catalog.schema,
+                    catalog.language,
+                    catalog.fallback_language
+                );
                 println!("   ✓ OCR carregado e pronto.\n");
             }
             Self::Json => emit_json(format!(
-                "{{\"type\":\"ready\",\"monitor\":{{\"name\":{},\"width\":{},\"height\":{}}},\"capture_preference\":\"dbd_window\",\"fallback\":\"monitor\"}}",
+                "{{\"type\":\"ready\",\"monitor\":{{\"name\":{},\"width\":{},\"height\":{}}},\"capture_preference\":\"dbd_window\",\"fallback\":\"monitor\",\"map_catalog\":{{\"source\":\"{}\",\"schema\":\"{}\",\"count\":{},\"language\":{},\"fallback_language\":\"{}\"}}}}",
                 json_string(&monitor.name),
                 monitor.width,
                 monitor.height,
+                catalog.source,
+                catalog.schema,
+                catalog.count,
+                json_string(&catalog.language),
+                catalog.fallback_language,
+            )),
+        }
+    }
+
+    fn emit_catalog_error(self, error: &str) {
+        match self {
+            Self::Dev => eprintln!("Erro no catalogo de mapas: {error}"),
+            Self::Json => emit_json(format!(
+                "{{\"type\":\"map_catalog_error\",\"error\":{}}}",
+                json_string(error),
             )),
         }
     }
@@ -149,9 +446,11 @@ impl OutputMode {
                 println!("    Candidatos mais proximos:");
                 for candidate in &diagnostic.candidates {
                     println!(
-                        "      - {} via '{}' | score {:.0}% | trecho {:.0}% | texto completo {:.0}%",
+                        "      - {} via '{}' | map_id {:?} | realm_id {:?} | score {:.0}% | trecho {:.0}% | texto completo {:.0}%",
                         candidate.canonical,
                         candidate.candidate,
+                        candidate.map_id.as_deref(),
+                        candidate.realm_id.as_deref(),
                         candidate.score * 100.0,
                         candidate.map_part_score * 100.0,
                         candidate.full_text_score * 100.0,
@@ -191,12 +490,16 @@ impl OutputMode {
                 );
                 println!("    OCR: {ocr_time:.2?}");
                 println!("    OCR bruto: {}", result.raw_ocr_text);
+                println!("    map_id: {:?}", result.map_id.as_deref());
+                println!("    realm_id: {:?}", result.realm_id.as_deref());
                 println!("→ Mapa confirmado: {}\n", result.map_name);
                 println!("{}", "─".repeat(55));
             }
             Self::Json => emit_json(format!(
-                "{{\"type\":\"map_detected\",\"map\":{},\"confidence\":{:.4},\"raw_ocr_text\":{},\"capture_source\":\"{}\",\"capture_ms\":{:.3},\"ocr_ms\":{:.3},\"screenshot_width\":{},\"screenshot_height\":{}}}",
+                "{{\"type\":\"map_detected\",\"map\":{},\"map_id\":{},\"realm_id\":{},\"confidence\":{:.4},\"raw_ocr_text\":{},\"capture_source\":\"{}\",\"capture_ms\":{:.3},\"ocr_ms\":{:.3},\"screenshot_width\":{},\"screenshot_height\":{}}}",
                 json_string(&result.map_name),
+                json_optional_string(result.map_id.as_deref()),
+                json_optional_string(result.realm_id.as_deref()),
                 result.confidence,
                 json_string(&result.raw_ocr_text),
                 capture.source.code(),
@@ -243,6 +546,10 @@ fn json_string(value: &str) -> String {
     out
 }
 
+fn json_optional_string(value: Option<&str>) -> String {
+    value.map(json_string).unwrap_or_else(|| "null".to_string())
+}
+
 fn json_map_not_found(
     capture: &CaptureMetrics,
     ocr_time: Duration,
@@ -268,9 +575,11 @@ fn json_candidates(candidates: &[map_detector::FuzzyCandidate]) -> String {
         .iter()
         .map(|candidate| {
             format!(
-                "{{\"candidate\":{},\"canonical\":{},\"score\":{:.4},\"map_part_score\":{:.4},\"full_text_score\":{:.4}}}",
+                "{{\"candidate\":{},\"canonical\":{},\"map_id\":{},\"realm_id\":{},\"score\":{:.4},\"map_part_score\":{:.4},\"full_text_score\":{:.4}}}",
                 json_string(&candidate.candidate),
                 json_string(&candidate.canonical),
+                json_optional_string(candidate.map_id.as_deref()),
+                json_optional_string(candidate.realm_id.as_deref()),
                 candidate.score,
                 candidate.map_part_score,
                 candidate.full_text_score,
@@ -281,10 +590,15 @@ fn json_candidates(candidates: &[map_detector::FuzzyCandidate]) -> String {
     format!("[{}]", items.join(","))
 }
 
+fn init_detector(maps: MapCatalog) -> &'static DbdMapDetector {
+    let detector =
+        DbdMapDetector::new_with_maps(maps).expect("Falha ao inicializar OCR ou catalogo de mapas");
+    let _ = DETECTOR.set(detector);
+    DETECTOR.get().expect("Detector nao inicializado")
+}
+
 fn get_detector() -> &'static DbdMapDetector {
-    DETECTOR.get_or_init(|| {
-        DbdMapDetector::new().expect("Falha ao inicializar OCR — verifique assets/")
-    })
+    DETECTOR.get().expect("Detector nao inicializado")
 }
 
 // ── Guard contra processamento sobreposto ─────────────────────────────────────
@@ -555,7 +869,15 @@ fn legacy_dev_main() {
 
 // ── Teste de integração (modo offline com screenshot salvo) ───────────────────
 fn main() {
-    let output = OutputMode::from_args();
+    let cli = CliConfig::from_args();
+    let output = cli.output;
+    let catalog = match load_map_catalog(cli.maps_json.as_deref(), &cli.language) {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            output.emit_catalog_error(&error.to_string());
+            process::exit(2);
+        }
+    };
 
     if output.is_dev() {
         println!("DBD Map Checker iniciado");
@@ -563,10 +885,11 @@ fn main() {
         println!("   Pressione ESC para sair.\n");
     }
 
-    let _ = get_detector();
+    let detector = init_detector(catalog.maps);
     let monitor = get_primary_monitor();
     let _ = get_capture_worker();
-    output.emit_ready(monitor);
+    debug_assert_eq!(detector.map_count(), catalog.status.count);
+    output.emit_ready(monitor, &catalog.status);
 
     let callback = move |event: Event| {
         if let EventType::KeyPress(key) = event.event_type {
@@ -646,6 +969,86 @@ mod tests {
     use super::*;
     use std::time::Instant;
 
+    fn test_map_catalog() -> MapCatalog {
+        vec![MapCandidate {
+            candidate: "TEST REALM - TEST MAP".to_string(),
+            canonical: "TEST MAP".to_string(),
+            map_id: Some("TEST_MAP".to_string()),
+            realm_id: Some("TEST_REALM".to_string()),
+        }]
+    }
+
+    #[test]
+    fn parse_maps_json_accepts_pairs() {
+        let (maps, schema) =
+            parse_maps_json(r#"[["CASA DOS THOMPSON","THE THOMPSON HOUSE"]]"#, "en-us").unwrap();
+
+        assert_eq!(schema, "legacy_pairs");
+        assert_eq!(
+            maps,
+            vec![MapCandidate {
+                candidate: "CASA DOS THOMPSON".to_string(),
+                canonical: "THE THOMPSON HOUSE".to_string(),
+                map_id: None,
+                realm_id: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_maps_json_rejects_invalid_shape() {
+        let error = parse_maps_json(r#"[["CASA DOS THOMPSON"]]"#, "en-us").unwrap_err();
+
+        assert!(error.to_string().contains("exatamente 2 strings"));
+    }
+
+    #[test]
+    fn load_map_catalog_requires_maps_json() {
+        let error = load_map_catalog(None, "pt-br").unwrap_err();
+
+        assert!(error.to_string().contains("--maps-json"));
+    }
+
+    #[test]
+    fn parse_maps_json_accepts_structured_catalog_with_language_fallback() {
+        let json = r#"{
+            "version": 1,
+            "maps": [
+                {
+                    "realm_id": "COLDWIND_FARM",
+                    "realm": {
+                        "pt-br": ["FAZENDA COLDWIND"],
+                        "en-us": ["COLDWIND FARM"]
+                    },
+                    "variations": [
+                        {
+                            "id": "THE_THOMPSON_HOUSE",
+                            "canonical": "THE THOMPSON HOUSE",
+                            "aliases": {
+                                "pt-br": ["CASA DOS THOMPSON"],
+                                "en-us": ["THE THOMPSON HOUSE"]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }"#;
+
+        let (maps, schema) = parse_maps_json(json, "pt-br").unwrap();
+
+        assert_eq!(schema, "structured");
+        assert!(maps.iter().any(|map| {
+            map.candidate == "FAZENDA COLDWIND - CASA DOS THOMPSON"
+                && map.canonical == "THE THOMPSON HOUSE"
+                && map.map_id.as_deref() == Some("THE_THOMPSON_HOUSE")
+                && map.realm_id.as_deref() == Some("COLDWIND_FARM")
+        }));
+        assert!(
+            maps.iter()
+                .any(|map| map.candidate == "COLDWIND FARM - THE THOMPSON HOUSE")
+        );
+    }
+
     #[test]
     fn integration_test_from_file() {
         if !std::path::Path::new("test_screenshot.png").exists() {
@@ -654,7 +1057,7 @@ mod tests {
         }
 
         let img = image::open("test_screenshot.png").unwrap();
-        let detector = DbdMapDetector::new().unwrap();
+        let detector = DbdMapDetector::new_with_maps(test_map_catalog()).unwrap();
         let result = detector.detect_map(&img).unwrap();
 
         match result {
@@ -736,7 +1139,8 @@ mod tests {
 
         // ── 2. Inicialização do motor OCR ─────────────────────────────────────
         let t_init = Instant::now();
-        let detector = DbdMapDetector::new().expect("Falha ao inicializar detector");
+        let detector = DbdMapDetector::new_with_maps(test_map_catalog())
+            .expect("Falha ao inicializar detector");
         println!("🧠 Motor OCR inicializado em {:?}", t_init.elapsed());
 
         // ── 3. Warmup (cold run — compila shaders, aquece cache) ──────────────

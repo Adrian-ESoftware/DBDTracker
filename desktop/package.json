@@ -26,6 +26,7 @@
       "database.js",
       "server.js",
       "background-collector.js",
+      "dbd-map-catalog.json",
       "overlay.html",
       "tray_icons",
       "map_overlays",
