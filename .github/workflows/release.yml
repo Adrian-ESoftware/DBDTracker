@@ -105,7 +105,9 @@ jobs:
           path: |
             desktop/dist/*.AppImage
             desktop/dist/*.tar.gz
-          if-no-files-found: error
+            desktop/dist/*.zsync
+            desktop/dist/latest-linux.yml
+          if-no-files-found: warn
 
   build-windows:
     name: Build Windows (.exe Portable)
