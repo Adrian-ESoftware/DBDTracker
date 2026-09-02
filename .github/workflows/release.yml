@@ -97,6 +97,8 @@ jobs:
       - name: Empacotar binário único Linux
         working-directory: desktop
         run: npm run dist:linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload de artefatos Linux
         uses: actions/upload-artifact@v4
@@ -144,6 +146,8 @@ jobs:
       - name: Empacotar executável único Windows
         working-directory: desktop
         run: npm run dist:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload de artefatos Windows
         uses: actions/upload-artifact@v4

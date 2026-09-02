@@ -13,9 +13,9 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test *.test.js",
-    "dist": "electron-builder",
-    "dist:win": "electron-builder --win portable",
-    "dist:linux": "electron-builder --linux AppImage tar.gz"
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win portable --publish never",
+    "dist:linux": "electron-builder --linux AppImage tar.gz --publish never"
   },
   "devDependencies": {
     "electron": "36.3.1",
