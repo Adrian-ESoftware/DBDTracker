@@ -41,7 +41,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev libx11-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          sudo apt-get install -y libdbus-1-dev libx11-dev libxi-dev libxtst-dev libxrandr-dev libxcursor-dev libxinerama-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

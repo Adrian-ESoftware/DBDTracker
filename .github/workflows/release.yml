@@ -69,7 +69,7 @@ jobs:
       - name: Instalar dependências de sistema Linux
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev libx11-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          sudo apt-get install -y libdbus-1-dev libx11-dev libxi-dev libxtst-dev libxrandr-dev libxcursor-dev libxinerama-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev
 
       - name: Configurar Rust
         uses: dtolnay/rust-toolchain@stable
@@ -184,6 +184,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.check-version.outputs.tag_name }}
+          target_commitish: ${{ github.sha }}
           name: DBD Tracker Overlay ${{ needs.check-version.outputs.tag_name }}
           draft: false
           prerelease: false
