@@ -1,0 +1,83 @@
+version: '3'
+
+vars:
+  LOCAL_LIB: '{{.ROOT_DIR}}/desktop/.lib'
+
+tasks:
+  default:
+    desc: 'Exibe a lista de tarefas disponíveis'
+    cmds:
+      - task --list
+
+  install:
+    desc: 'Instala as dependências do desktop'
+    dir: desktop
+    cmds:
+      - LD_LIBRARY_PATH="{{.LOCAL_LIB}}:$LD_LIBRARY_PATH" npm install
+
+  build:map-check:
+    desc: 'Compila o binário otimizado do map-check (Rust)'
+    dir: map-check
+    sources:
+      - 'src/**/*.rs'
+      - 'Cargo.toml'
+      - 'build.rs'
+    generates:
+      - 'target/electron/map-check'
+      - 'target/electron/map-check.exe'
+    cmds:
+      - cargo build --profile electron
+
+  build:linux:
+    desc: 'Gera o binário único AppImage para Linux (com map-check embutido)'
+    deps:
+      - build:map-check
+    dir: desktop
+    cmds:
+      - LD_LIBRARY_PATH="{{.LOCAL_LIB}}:$LD_LIBRARY_PATH" npm run dist:linux
+
+  build:windows:
+    desc: 'Gera o executável portátil único .exe para Windows (com map-check embutido)'
+    deps:
+      - build:map-check
+    dir: desktop
+    cmds:
+      - LD_LIBRARY_PATH="{{.LOCAL_LIB}}:$LD_LIBRARY_PATH" npm run dist:win
+
+  build:
+    desc: 'Compila o map-check e gera o executável único para o sistema operacional atual'
+    cmds:
+      - cmd: task build:linux
+        platforms: [linux]
+      - cmd: task build:windows
+        platforms: [windows]
+
+  dev:
+    desc: 'Inicia o aplicativo Electron em modo de desenvolvimento'
+    dir: desktop
+    cmds:
+      - LD_LIBRARY_PATH="{{.LOCAL_LIB}}:$LD_LIBRARY_PATH" npm start
+
+  test:
+    desc: 'Executa todos os testes do projeto (Node.js e Rust)'
+    cmds:
+      - task: test:desktop
+      - task: test:map-check
+
+  test:desktop:
+    desc: 'Executa os testes unitários do desktop'
+    dir: desktop
+    cmds:
+      - LD_LIBRARY_PATH="{{.LOCAL_LIB}}:$LD_LIBRARY_PATH" npm test
+
+  test:map-check:
+    desc: 'Executa os testes unitários do map-check'
+    dir: map-check
+    cmds:
+      - cargo test
+
+  clean:
+    desc: 'Limpa artefatos de build (desktop/dist e map-check/target)'
+    cmds:
+      - rm -rf desktop/dist
+      - rm -rf map-check/target

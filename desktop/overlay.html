@@ -407,7 +407,7 @@ function bars(id, rows, key) {
 var sectionLabels = {totalMatchesPlayed:'Partidas', totalHoursPlayed:'Horas', bpEarnedThroughMatch:'Total BP'};
 
 function globalSection(id, rows, role) {
-  var row = rows.find(function(x) { return x.section === 'regular-trials' && x.period === 'all-time' && x.role === role; });
+  var row = rows.find(function(x) { return (x.section === 'regular-trials' || x.section === 'overview') && x.period === 'all-time' && x.role === role; });
   var values = (row && row.values) || {};
   var keys = ['totalHoursPlayed','totalMatchesPlayed','bpEarnedThroughMatch'];
   var entries = keys.filter(function(k) { return typeof values[k] === 'number'; });
@@ -418,7 +418,7 @@ function globalSection(id, rows, role) {
 }
 
 function characterSection(id, titleId, cardId, rows, role) {
-  var row = rows.find(function(x) { return x.section === 'regular-trials' && x.period === 'all-time' && x.role === role; });
+  var row = rows.find(function(x) { return (x.section === 'regular-trials' || x.section === 'overview') && x.period === 'all-time' && x.role === role; });
   var label = role === 'survivor' ? 'Survivor' : 'Killer';
   var emblems = /Benevolent|Evader|Lightbringer|Unbroken|Chaser|Devout|Gatekeeper|Malicious/i;
   $(titleId).textContent = row ? 'Top ' + label + ' / ' + row.character : 'Top ' + label;

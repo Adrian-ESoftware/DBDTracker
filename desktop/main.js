@@ -15,11 +15,14 @@ import { openDatabase } from "./database.js";
 import { startServer } from "./server.js";
 import { createBackgroundCollector } from "./background-collector.js";
 
-// ── Otimizações de memória ──
-app.disableHardwareAcceleration();
-app.commandLine.appendSwitch("disable-gpu");
-app.commandLine.appendSwitch("disable-gpu-compositing");
-app.commandLine.appendSwitch("disable-software-rasterizer");
+// ── Otimizações de memória e plataforma ──
+if (process.platform === "win32") {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-gpu-compositing");
+  app.commandLine.appendSwitch("disable-software-rasterizer");
+  app.commandLine.appendSwitch("wm-window-animations-disabled");
+}
 app.commandLine.appendSwitch("js-flags", "--max-old-space-size=64 --lite-mode");
 app.commandLine.appendSwitch("disable-site-isolation-trials");
 app.commandLine.appendSwitch("disable-features", "SpareRendererForSitePerProcess,TranslateUI,BlinkGenPropertyTrees");
@@ -142,7 +145,8 @@ function createWindow() {
       v8CacheOptions: "none"
     }
   });
-  window.setAlwaysOnTop(true, "screen-saver");
+  const alwaysOnTopLevel = process.platform === "win32" || process.platform === "darwin" ? "screen-saver" : "floating";
+  window.setAlwaysOnTop(true, alwaysOnTopLevel);
   window.loadFile(join(import.meta.dirname, "overlay.html"));
   window.once("ready-to-show", () => window.show());
 
@@ -198,10 +202,20 @@ function startMapCheck() {
     return;
   }
 
-  const exeName = "map-check.exe";
-  const mapCheckPath = app.isPackaged
+  const exeName = process.platform === "win32" ? "map-check.exe" : "map-check";
+  let mapCheckPath = app.isPackaged
     ? join(process.resourcesPath, "map-check", exeName)
     : join(import.meta.dirname, "..", "map-check", "target", "electron", exeName);
+
+  if (!existsSync(mapCheckPath)) {
+    const altName = process.platform === "win32" ? "map-check" : "map-check.exe";
+    const altPath = app.isPackaged
+      ? join(process.resourcesPath, "map-check", altName)
+      : join(import.meta.dirname, "..", "map-check", "target", "electron", altName);
+    if (existsSync(altPath)) {
+      mapCheckPath = altPath;
+    }
+  }
 
   if (!existsSync(mapCheckPath)) {
     console.warn(`[Main] map-check executable not found at: ${mapCheckPath}`);
@@ -317,7 +331,8 @@ function createMapOverlayWindow(mapName) {
     }
   });
 
-  mapOverlayWindow.setAlwaysOnTop(true, "screen-saver");
+  const alwaysOnTopLevel = process.platform === "win32" || process.platform === "darwin" ? "screen-saver" : "floating";
+  mapOverlayWindow.setAlwaysOnTop(true, alwaysOnTopLevel);
   mapOverlayWindow.setIgnoreMouseEvents(true);
 
   positionOverlayWindow();

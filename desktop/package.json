@@ -9,7 +9,9 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test *.test.js",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win portable",
+    "dist:linux": "electron-builder --linux AppImage tar.gz"
   },
   "devDependencies": {
     "electron": "36.3.1",
@@ -32,15 +34,29 @@
       "map_overlays",
       ".env"
     ],
-    "extraResources": [
-      {
-        "from": "../map-check/target/electron/map-check.exe",
-        "to": "map-check/map-check.exe"
-      }
-    ],
     "win": {
       "target": "portable",
-      "icon": "tray_icons/Icon.png"
+      "icon": "tray_icons/Icon.png",
+      "extraResources": [
+        {
+          "from": "../map-check/target/electron/map-check.exe",
+          "to": "map-check/map-check.exe"
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ],
+      "category": "Game",
+      "icon": "tray_icons/Icon.png",
+      "extraResources": [
+        {
+          "from": "../map-check/target/electron/map-check",
+          "to": "map-check/map-check"
+        }
+      ]
     }
   },
   "dependencies": {

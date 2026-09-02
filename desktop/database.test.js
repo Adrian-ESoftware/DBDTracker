@@ -145,3 +145,27 @@ test("isolamento multi-usuário (multi-tenancy) no SQLite", async () => {
   assert.ok(rawMatches.find(m => m.user_email === "userB@test.com").id.startsWith("userB_test_com_"));
 });
 
+test("topCharacters deriva os destaques das partidas quando top_character_stats estiver vazio", async () => {
+  const db = openDatabase(":memory:");
+  await ingestMatches(db, [
+    { source_id: "m1", played_at: "2026-06-08T10:00:00Z", role: "survivor", character: "Nea", result: "ESCAPED", score: 25000 },
+    { source_id: "m2", played_at: "2026-06-08T11:00:00Z", role: "survivor", character: "Nea", result: "SACRIFICED", score: 18000 },
+    { source_id: "m3", played_at: "2026-06-08T12:00:00Z", role: "survivor", character: "Meg", result: "ESCAPED", score: 20000 },
+    { source_id: "m4", played_at: "2026-06-08T13:00:00Z", role: "killer", character: "The Mastermind", result: "4K", score: 32000 }
+  ]);
+
+  const top = await topCharacters(db);
+  assert.equal(top.length, 2);
+  const surv = top.find(t => t.role === "survivor");
+  const kil = top.find(t => t.role === "killer");
+  assert.ok(surv);
+  assert.equal(surv.character, "Nea");
+  assert.equal(surv.values["Matches played"], "2");
+  assert.equal(surv.values["Escape Rate"], "50%");
+  assert.ok(kil);
+  assert.equal(kil.character, "The Mastermind");
+  assert.equal(kil.values["Matches played"], "1");
+  assert.equal(kil.values["Kill Rate"], "100%");
+});
+
+

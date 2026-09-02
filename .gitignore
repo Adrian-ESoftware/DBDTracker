@@ -3,6 +3,9 @@ node_modules/
 jspm_packages/
 .npm-cache/
 target/
+.lib/
+.task/
+
 
 # Build directories and outputs
 dist/

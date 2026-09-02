@@ -1,73 +1,70 @@
-import { BrowserWindow, session, app } from "electron";
+let BrowserWindow, session, app;
+try {
+  const electron = await import("electron");
+  BrowserWindow = electron.BrowserWindow;
+  session = electron.session;
+  app = electron.app;
+} catch {}
 import { join } from "node:path";
-import { writeFileSync, readFileSync } from "node:fs";
-import { ingestMatches, ingestOfficialMetrics, ingestOfficialSections, ingestSnapshots, ingestTopCharacter, getBackfillSnapshots } from "./database.js";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { ingestMatches, ingestOfficialSections, ingestSnapshots, getBackfillSnapshots } from "./database.js";
 
-async function fetchUserEmail(instance) {
-  try {
-    const email = await instance.webContents.executeJavaScript(`
-      Promise.race([
-        fetch("https://account-backend.bhvr.com/players/me", { credentials: "include" })
-          .then(r => r.json())
-          .then(data => data.email || null)
-          .catch(() => null),
-        new Promise(resolve => setTimeout(() => resolve(null), 5000))
-      ])
-    `);
-    if (email) return email;
-  } catch (e) {
-    console.error("[Collector] CORS or execution error fetching email from page context:", e);
-  }
+const DEFAULT_PROVIDER = "steam";
+const INTERVAL_MS = 60_000;
 
-  // Fallback: Fetch directly from Node.js using session cookies
+function getConfigPath() {
   try {
-    const cookies = await instance.webContents.session.cookies.get({});
-    const cookieString = cookies
-      .filter(c => c.domain.includes("bhvr.com") || c.domain.includes("deadbydaylight.com"))
-      .map(c => `${c.name}=${c.value}`)
-      .join("; ");
-    if (cookieString) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      try {
-        const response = await fetch("https://account-backend.bhvr.com/players/me", {
-          headers: { "Cookie": cookieString },
-          signal: controller.signal
-        });
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.email) {
-            return data.email;
-          }
-        }
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    }
-  } catch (e) {
-    console.error("[Collector] Fallback cookie fetch error:", e);
+    return join(app.getPath("userData"), "config.json");
+  } catch {
+    return join(process.cwd(), "config.json");
   }
-  return null;
 }
 
-function saveUserEmail(email) {
+export function loadConfig() {
   try {
-    const configPath = join(app.getPath("userData"), "config.json");
+    const configPath = getConfigPath();
+    if (existsSync(configPath)) {
+      return JSON.parse(readFileSync(configPath, "utf-8"));
+    }
+  } catch (error) {
+    console.error("[Collector] Erro ao carregar config.json:", error);
+  }
+  return {};
+}
+
+export function saveConfig(updates) {
+  try {
+    const configPath = getConfigPath();
     let config = {};
     try {
-      config = JSON.parse(readFileSync(configPath, "utf-8"));
+      if (existsSync(configPath)) {
+        config = JSON.parse(readFileSync(configPath, "utf-8"));
+      }
     } catch {}
-    config.userEmail = email;
+    config = { ...config, ...updates };
     writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    return config;
   } catch (error) {
     console.error("[Collector] Erro ao salvar config.json:", error);
   }
 }
 
+export function extractAuthToken(authStore) {
+  if (!authStore) return null;
+  const state = authStore.state || authStore;
+  const authToken = state.authToken;
+  if (!authToken || !authToken.token) return null;
 
-const STATISTICS_URL = "https://stats.deadbydaylight.com/statistics/";
-const HISTORY_URL = "https://stats.deadbydaylight.com/match-history/";
-const INTERVAL_MS = 60_000;
+  // Verifica expiração caso exista (adiciona margem de 30s)
+  if (authToken.expirationDate && Date.now() >= (authToken.expirationDate - 30_000)) {
+    return null;
+  }
+  if (authToken.expired) {
+    return null;
+  }
+
+  return authToken.token;
+}
 
 const aliases = {
   id: ["id", "matchId", "match_id", "trialId", "trial_id"],
@@ -90,38 +87,50 @@ const aliases = {
 
 const object = value => value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
 const pick = (source, names) => names.map(name => source?.[name]).find(value => value !== undefined && value !== null);
-const text = value => typeof value === "string" ? value.trim() || undefined : object(value) ? text(value.name ?? value.label ?? value.title ?? value.displayName) : undefined;
-const number = value => {
+export const text = value => typeof value === "string" ? value.trim() || undefined : object(value) ? text(value.name ?? value.label ?? value.title ?? value.displayName ?? value.id) : undefined;
+export const number = value => {
   const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value.replace(/[^\d.-]/g, "")) : undefined;
   return Number.isFinite(parsed) ? parsed : undefined;
 };
-const names = value => Array.isArray(value) ? value.map(text).filter(Boolean) : [];
-const role = value => /VE_Slasher|killer|assass/i.test(text(value) ?? "") ? "killer" : /VE_Camper|survivor|sobreviv/i.test(text(value) ?? "") ? "survivor" : undefined;
-const date = value => {
+export const names = value => Array.isArray(value) ? value.map(text).filter(Boolean) : [];
+export const role = value => /VE_Slasher|killer|assass/i.test(text(value) ?? "") ? "killer" : /VE_Camper|survivor|sobreviv/i.test(text(value) ?? "") ? "survivor" : undefined;
+export const date = value => {
   const parsed = new Date(typeof value === "number" && value < 10_000_000_000 ? value * 1000 : value);
   return Number.isNaN(parsed.valueOf()) ? undefined : parsed.toISOString();
 };
+
+export function formatStatus(value) {
+  const raw = text(value);
+  if (!raw) return undefined;
+  if (/VE_Escaped/i.test(raw)) return "ESCAPED";
+  if (/VE_Sacrificed/i.test(raw)) return "SACRIFICED";
+  if (/VE_Killed/i.test(raw)) return "DEAD";
+  if (/VE_SurrenderLoss/i.test(raw)) return "DEFEAT";
+  if (/VE_ManuallyLeftMatch|VE_Disconnected/i.test(raw)) return "DISCONNECTED";
+  return raw;
+}
+
 const loadout = source => ({
   perks: names(pick(source, aliases.perks)), item: text(pick(source, aliases.item)),
   addons: names(pick(source, aliases.addons)), offering: text(pick(source, aliases.offering))
 });
 
-const officialLoadout = player => ({
+export const officialLoadout = player => ({
   perks: names(player?.characterLoadout?.perks),
   item: text(player?.characterLoadout?.power),
   addons: names(player?.characterLoadout?.addOns),
   offering: text(player?.characterLoadout?.offering)
 });
 
-const officialParticipant = player => ({
+export const officialParticipant = player => ({
   character: text(player?.characterName),
   role: role(player?.playerRole) ?? "survivor",
-  result: text(player?.playerStatus),
+  result: formatStatus(player?.playerStatus),
   score: number(player?.bloodpointsEarned),
   ...officialLoadout(player)
 });
 
-function normalizeOfficialMatch(source) {
+export function normalizeOfficialMatch(source) {
   if (!source?.matchStat || !source?.playerStat || !Array.isArray(source?.opponentStat)) return;
   const player = source.playerStat;
   const playerRole = role(player.playerRole);
@@ -131,7 +140,7 @@ function normalizeOfficialMatch(source) {
     ? source.opponentStat.find(item => role(item.playerRole) === "killer")
     : player;
   const survivors = playerRole === "killer" ? source.opponentStat : [player, ...source.opponentStat.filter(item => role(item.playerRole) === "survivor")];
-  const kills = survivors.filter(item => /SACRIFICED|KILLED|MORI|DEAD/i.test(text(item.playerStatus) ?? "")).length;
+  const kills = survivors.filter(item => /SACRIFICED|KILLED|MORI|DEAD|DEFEAT/i.test(formatStatus(item.playerStatus) ?? "")).length;
   return {
     source_id: `official-${source.matchStat.matchStartTime}`,
     played_at: date(source.matchStat.matchStartTime),
@@ -139,7 +148,7 @@ function normalizeOfficialMatch(source) {
     character: text(player.characterName),
     map: text(source.matchStat.map) ?? text(source.matchStat.mapName),
     duration_sec: Math.round(number(source.matchStat.matchDuration) ?? 0),
-    result: playerRole === "killer" ? `${kills}K` : text(player.playerStatus),
+    result: playerRole === "killer" ? `${kills}K` : formatStatus(player.playerStatus),
     score: number(player.bloodpointsEarned),
     loadout: officialLoadout(player),
     killer_info: killer ? {
@@ -154,7 +163,7 @@ function normalizeOfficialMatch(source) {
   };
 }
 
-function normalizeMatch(value) {
+export function normalizeMatch(value) {
   const source = object(value);
   if (!source) return;
   const official = normalizeOfficialMatch(source);
@@ -212,7 +221,7 @@ function isMoreOrEquallyComplete(incoming, existing) {
   return incomingScore >= existingScore;
 }
 
-function findMatches(payload) {
+export function findMatches(payload) {
   const found = [];
   const visited = new Set();
   const walk = (value, depth = 0) => {
@@ -228,7 +237,6 @@ function findMatches(payload) {
   const map = new Map();
   for (const match of found) {
     if (!match.played_at || !match.role) continue;
-    // Usa source_id quando disponível para dedup mais preciso (evita duplicatas com amigos)
     const key = match.source_id || `${match.played_at}|${match.role}`;
     const existing = map.get(key);
     if (!existing || isMoreOrEquallyComplete(match, existing)) {
@@ -238,137 +246,84 @@ function findMatches(payload) {
   return [...map.values()];
 }
 
-const metricsScript = `(() => {
-  const clean = value => (value || "").replace(/\\s+/g, " ").trim();
-  const metrics = [], seen = new Set(), lines = document.body.innerText.split(/\\n+/).map(clean).filter(Boolean);
-  const add = (label, value) => {
-    if (!label || !value || !/\\d/.test(value) || label.length > 100 || value.length > 80) return;
-    const key = label + "|" + value;
-    if (!seen.has(key)) { seen.add(key); metrics.push({label, value}); }
-  };
-  for (const element of document.querySelectorAll("article,section,li,[class*='card'],[class*='stat'],[data-testid]")) {
-    const parts = [...element.querySelectorAll("h1,h2,h3,h4,h5,p,span,strong,dt,dd")].map(node => clean(node.textContent)).filter(Boolean);
-    add(parts.find(x => !/^[-+]?\\d[\\d.,:% hms]*$/i.test(x)), parts.find(x => /\\d/.test(x)));
-  }
-  for (let i=0;i<lines.length-1;i++) if (!/\\d/.test(lines[i])) add(lines[i], lines[i+1]);
-  return { metrics: metrics.slice(0,100), text: clean(document.body.innerText).slice(0,100000) };
-})()`;
-
-const characterDetailScript = `(() => {
-  const clean = value => (value || "").replace(/\\s+/g, " ").trim();
-  const lines = document.body.innerText.split(/\\n+/).map(clean).filter(Boolean);
-  const labelMappings = {
-    "Hours played": ["hours played", "horas jogadas", "horas de jogo"],
-    "Pick Rate": ["pick rate", "taxa de escolha"],
-    "Escape Rate": ["escape rate", "taxa de fuga"],
-    "Kill Rate": ["kill rate", "taxa de eliminação", "taxa de matança", "taxa de abate"],
-    "Matches played": ["matches played", "partidas jogadas"],
-    "Total escapes": ["total escapes", "total de fugas"],
-    "Total Bloodpoints earned": ["total bloodpoints earned", "total de pontos de sangue ganhos", "total de pontos de sangue recebidos"],
-    "Average Bloodpoints earned": ["average bloodpoints earned", "média de pontos de sangue ganhos"],
-    "Total survivors healed": ["total survivors healed", "total de sobreviventes curados"],
-    "Total times hooked": ["total times hooked", "total de ganchos sofridos", "total de vezes no gancho"],
-    "Average times hooked": ["average times hooked", "média de ganchos sofridos"],
-    "Total chases won": ["total chases won", "total de perseguições vencidas"],
-    "Longest chase time": ["longest chase time", "maior tempo de perseguição"],
-    "Total kills": ["total kills", "total de eliminações", "total de abates"],
-    "Total hooks": ["total hooks", "total de ganchos"],
-    "Average hooks": ["average hooks", "média de ganchos"],
-    "Total hits": ["total hits", "total de acertos", "total de golpes"],
-    "Total gens kicked": ["total gens kicked", "total de geradores chutados"],
-    "Total pallets destroyed": ["total pallets destroyed", "total de barricadas destruídas", "total de pallets destruídos"],
-    "Total walls broken": ["total walls broken", "total de paredes quebradas"],
-    "Total vaults broken": ["total vaults broken", "total de janelas puladas"]
-  };
-  const values = {};
-  for (const [key, searchTerms] of Object.entries(labelMappings)) {
-    const index = lines.findIndex(line => searchTerms.includes(line.toLowerCase()));
-    if (index >= 0 && lines[index + 1]) values[key] = lines[index + 1];
-  }
-  const badge = lines.findIndex(line => /top survivor|top killer|melhor sobrevivente|melhor assassino/i.test(line));
-  const activeRole = badge >= 0 && /survivor|sobrevivente/i.test(lines[badge]) ? "survivor" : "killer";
-  const heading = lines.map(line => line.toLowerCase()).lastIndexOf(
-    activeRole === "survivor" ? "survivor" : "killer",
-    badge >= 0 ? badge : lines.length
-  );
-  let headingIndex = heading;
-  if (headingIndex < 0) {
-    headingIndex = lines.map(line => line.toLowerCase()).lastIndexOf(
-      activeRole === "survivor" ? "sobrevivente" : "assassino",
-      badge >= 0 ? badge : lines.length
-    );
-  }
-  const character = headingIndex >= 0 ? lines.slice(headingIndex + 1).find(line =>
-    !/top survivor|top killer|melhor sobrevivente|melhor assassino|hours played|horas jogadas|horas de jogo|pick rate|taxa de escolha|escape rate|taxa de fuga|kill rate|taxa de abate|taxa de eliminação/i.test(line) &&
-    !/\\d/.test(line) && line.length < 60
-  ) : undefined;
-  
-  const folder = activeRole === "survivor" ? "/characters/survivors/" : "/characters/killers/";
-  let imgEl = [...document.querySelectorAll("img")].find(img => {
-    if (!img.src) return false;
-    const decodedSrc = decodeURIComponent(img.src).toLowerCase();
-    return decodedSrc.includes(folder);
-  });
-  if (!imgEl) {
-    imgEl = [...document.querySelectorAll("img")].find(img => {
-      if (!img.src) return false;
-      const decodedSrc = decodeURIComponent(img.src).toLowerCase();
-      return decodedSrc.includes("/characters/");
+async function fetchApi(url, token, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 15000);
+  try {
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        ...(options.headers || {})
+      },
+      signal: controller.signal
     });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  
-  let image = undefined;
-  if (imgEl && imgEl.src) {
-    const rawSrc = imgEl.src;
-    if (rawSrc.includes("?url=") || rawSrc.includes("&url=")) {
-      try {
-        const urlParams = new URL(rawSrc).searchParams;
-        image = urlParams.get("url") || rawSrc;
-      } catch (e) {
-        image = decodeURIComponent(rawSrc);
-      }
-    } else {
-      image = rawSrc;
-    }
-  }
-
-  return { character, values, image, text: clean(document.body.innerText).slice(0,100000) };
-})()`;
+}
 
 export function createBackgroundCollector(db, onStatus) {
-  let browser;
-  let timer;
+  let browser = null;
+  let timer = null;
+  let loginCheckInterval = null;
   let collecting = false;
   let loggedIn = false;
-  let lastRun;
-  let releaseTimer;
-  let lastStatsScrapeTime = 0;
-  const STATS_SCRAPE_INTERVAL = 30 * 60 * 1000; // 30 minutes in ms
-  const pendingResponses = new Map();
+  let lastRun = null;
+  let cachedAuthStore = null;
+
+  const state = { message: "Iniciando coletor...", loggedIn, collecting, lastRun };
 
   const status = (message, extra = {}) => {
     Object.assign(state, { message, loggedIn, collecting, lastRun, ...extra });
-    onStatus(state);
+    if (typeof onStatus === "function") {
+      onStatus(state);
+    }
   };
-  const state = { message: "Iniciando coletor...", loggedIn, collecting, lastRun };
+
+  // Carrega configuração persistente inicial
+  const initialConfig = loadConfig();
+  if (initialConfig.authStore) {
+    cachedAuthStore = initialConfig.authStore;
+    if (extractAuthToken(cachedAuthStore)) {
+      loggedIn = true;
+    }
+  }
+  if (initialConfig.userEmail) {
+    db.userEmail = initialConfig.userEmail;
+  }
 
   async function processPayload(url, payload) {
     if (/\/players\/me$/i.test(url) && payload?.email) {
       const email = payload.email;
       if (db.userEmail !== email) {
         db.userEmail = email;
-        saveUserEmail(email);
-        console.log(`[Collector] Novo e-mail do usuário ativo: ${email}`);
+        saveConfig({ userEmail: email });
+        console.log(`[Collector] E-mail do usuário ativo: ${email}`);
       }
     }
     const matches = findMatches(payload);
-    if (matches.length) await ingestMatches(db, matches);
+    if (matches.length) {
+      await ingestMatches(db, matches);
+    }
     if (/\/player-stats\/games\/dbd\/providers\//i.test(url) && payload?.data) {
+      const isRegular = /matchCategory=Regular/i.test(url);
       await ingestOfficialSections(db, {
         data: payload.data,
-        section: /matchCategory=Regular/i.test(url) ? "regular-trials" : "overview",
+        section: isRegular ? "regular-trials" : "overview",
         captured_at: new Date().toISOString()
       });
+      // Se for a visão geral, preenche também regular-trials como base
+      if (!isRegular) {
+        await ingestOfficialSections(db, {
+          data: payload.data,
+          section: "regular-trials",
+          captured_at: new Date().toISOString()
+        });
+      }
     }
     await ingestSnapshots(db, [{
       source_url: url,
@@ -388,10 +343,34 @@ export function createBackgroundCollector(db, onStatus) {
     } catch {}
   }
 
-  function ensureBrowser() {
-    if (browser && !browser.isDestroyed()) return browser;
+  function getActiveToken() {
+    if (cachedAuthStore) {
+      const token = extractAuthToken(cachedAuthStore);
+      if (token) return token;
+    }
+    const cfg = loadConfig();
+    if (cfg.authStore) {
+      cachedAuthStore = cfg.authStore;
+      const token = extractAuthToken(cachedAuthStore);
+      if (token) return token;
+    }
+    return null;
+  }
+
+  function ensureBrowser(show = false) {
+    if (browser && !browser.isDestroyed()) {
+      if (show && !browser.isVisible()) {
+        browser.show();
+        browser.focus();
+      }
+      return browser;
+    }
+
     browser = new BrowserWindow({
-      width: 1180, height: 820, show: false, title: "DBD Tracker - Login oficial",
+      width: 1180,
+      height: 820,
+      show,
+      title: "DBD Tracker - Login oficial",
       webPreferences: {
         partition: "persist:dbd-official",
         contextIsolation: true,
@@ -400,236 +379,256 @@ export function createBackgroundCollector(db, onStatus) {
       }
     });
 
-    const win = browser;
-    win.on("close", event => {
-      if (!win.forceClose) { event.preventDefault(); win.hide(); }
-    });
-    win.webContents.debugger.attach("1.3");
-    win.webContents.debugger.sendCommand("Network.enable");
-    win.webContents.debugger.on("message", async (_, method, params) => {
-      if (method === "Network.responseReceived") {
-        if (params.type !== "XHR" && params.type !== "Fetch") return;
-        const type = params.response.mimeType ?? "";
-        if (!type.includes("json") && !/match|stat|history|player/i.test(params.response.url)) return;
-        pendingResponses.set(params.requestId, params.response.url);
-      } else if (method === "Network.loadingFinished") {
-        const url = pendingResponses.get(params.requestId);
-        if (!url) return;
-        pendingResponses.delete(params.requestId);
-        try {
-          if (win.isDestroyed()) return;
-          const result = await win.webContents.debugger.sendCommand("Network.getResponseBody", { requestId: params.requestId });
-          const bodyText = (result.body || "").trim();
-          if (!bodyText || bodyText.startsWith("<") || bodyText.startsWith("<!")) return;
-          const payload = JSON.parse(bodyText);
-          await processPayload(url, payload);
-        } catch (error) {
-          // Suppress parsing/debugger noise for unrelated network requests
-          if (error instanceof SyntaxError || error.message?.includes("No resource") || error.message?.includes("No data")) {
-            return;
-          }
-          console.error("Erro no processamento do payload:", error);
-        }
-      } else if (method === "Network.loadingFailed") {
-        pendingResponses.delete(params.requestId);
+    browser.on("close", event => {
+      if (!browser.forceClose) {
+        event.preventDefault();
+        browser.hide();
+        stopLoginWatcher();
       }
     });
+
     return browser;
   }
 
-  async function checkLoginState(instance) {
-    const maxAttempts = 10;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const currentUrl = instance.webContents.getURL() || "";
-      if (currentUrl && currentUrl !== "about:blank" && !currentUrl.includes("stats.deadbydaylight.com")) {
-        return false;
+  async function checkAndExtractAuth(win) {
+    if (!win || win.isDestroyed()) return null;
+    try {
+      const authRaw = await win.webContents.executeJavaScript(`
+        (() => {
+          try {
+            return localStorage.getItem("auth-store") || null;
+          } catch {
+            return null;
+          }
+        })()
+      `);
+
+      if (!authRaw) return null;
+      const parsed = typeof authRaw === "string" ? JSON.parse(authRaw) : authRaw;
+      const token = extractAuthToken(parsed);
+      if (!token) return null;
+
+      cachedAuthStore = parsed;
+      saveConfig({ authStore: parsed });
+      loggedIn = true;
+      console.log("[Collector] Token auth-store obtido com sucesso do localStorage!");
+
+      // Tenta obter e-mail do usuário
+      try {
+        const res = await fetchApi("https://account-backend.bhvr.com/players/me", token, { timeout: 5000 });
+        if (res.ok) {
+          const profile = await res.json();
+          if (profile?.email) {
+            db.userEmail = profile.email;
+            saveConfig({ userEmail: profile.email });
+            console.log(`[Collector] E-mail obtido via API: ${profile.email}`);
+          }
+        }
+      } catch (err) {
+        console.warn("[Collector] Aviso ao obter e-mail via API:", err.message);
       }
-      const body = await instance.webContents.executeJavaScript("document.body.innerText");
-      const hasStatsContent = /overview|trials|partidas|recent|historico|estatisticas|escapes|killer|survivor/i.test(body);
-      const hasLoginPrompt = /\b(sign in|join now|log in|entrar|conectar)\b/i.test(body);
-      if (hasStatsContent && !hasLoginPrompt) {
-        return true;
-      }
-      if (hasLoginPrompt && body.length > 100) {
-        return false;
-      }
-      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      return token;
+    } catch {
+      return null;
     }
-    const currentUrl = instance.webContents.getURL() || "";
-    const body = await instance.webContents.executeJavaScript("document.body.innerText");
-    const isStatsPage = currentUrl.includes("stats.deadbydaylight.com");
-    const hasLoginPrompt = /\b(sign in|join now|log in|entrar|conectar)\b/i.test(body);
-    return isStatsPage && !hasLoginPrompt;
   }
 
-  async function load(url, checkLogin = false) {
-    const instance = ensureBrowser();
+  function startLoginWatcher(win) {
+    stopLoginWatcher();
+    loginCheckInterval = setInterval(async () => {
+      if (!win || win.isDestroyed() || !win.isVisible()) {
+        stopLoginWatcher();
+        return;
+      }
+      const token = await checkAndExtractAuth(win);
+      if (token) {
+        stopLoginWatcher();
+        status("Login concluído com sucesso! Fechando janela...");
+        setTimeout(() => {
+          if (win && !win.isDestroyed()) {
+            win.hide();
+          }
+          collect();
+        }, 1000);
+      }
+    }, 1500);
+  }
+
+  function stopLoginWatcher() {
+    if (loginCheckInterval) {
+      clearInterval(loginCheckInterval);
+      loginCheckInterval = null;
+    }
+  }
+
+  async function trySilentAuthFromSession() {
     try {
+      const hiddenWin = ensureBrowser(false);
       await Promise.race([
-        instance.loadURL(url),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout loading URL: " + url)), 20000))
+        hiddenWin.loadURL("https://stats.deadbydaylight.com/"),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000))
       ]);
-    } catch (err) {
-      console.warn("[Collector] Warning during loadURL:", err.message);
+      await new Promise(r => setTimeout(r, 2000));
+      const token = await checkAndExtractAuth(hiddenWin);
+      if (!browser?.isVisible()) {
+        browser.forceClose = true;
+        browser.close();
+        browser = null;
+      }
+      return token;
+    } catch {
+      if (browser && !browser.isDestroyed() && !browser.isVisible()) {
+        browser.forceClose = true;
+        browser.close();
+        browser = null;
+      }
+      return null;
     }
-    if (checkLogin) {
-      loggedIn = await checkLoginState(instance);
-      console.log(`[Collector] Verificação de login: ${loggedIn ? "Conectado" : "Desconectado"}`);
-    } else {
-      await new Promise(resolve => setTimeout(resolve, 3000));
-    }
-    return instance;
   }
 
   async function collect() {
     if (collecting) return state;
     if (browser && !browser.isDestroyed() && browser.isVisible()) {
-      console.log("[Collector] Coleta automática suspensa enquanto a janela de login está aberta.");
+      console.log("[Collector] Coleta suspensa enquanto a janela de login está aberta.");
       return state;
     }
+
+    let token = getActiveToken();
+    if (!token) {
+      console.log("[Collector] Nenhum token válido em cache. Tentando verificar sessão existente...");
+      token = await trySilentAuthFromSession();
+    }
+
+    if (!token) {
+      loggedIn = false;
+      status("Sessao expirada ou desconectada. Abra o login uma vez.");
+      return state;
+    }
+
     collecting = true;
-    status("Atualizando dados em segundo plano...");
+    status("Atualizando dados via API em segundo plano...");
+
     try {
-      const now = Date.now();
-      const needStats = (now - lastStatsScrapeTime) > STATS_SCRAPE_INTERVAL;
+      const cfg = loadConfig();
+      const provider = cfg.provider || DEFAULT_PROVIDER;
 
-      if (needStats) {
-        console.log("[Collector] Iniciando coleta de estatísticas globais...");
-        const statistics = await load(STATISTICS_URL, true);
-        if (!loggedIn) {
-          status("Sessao expirada. Abra o login uma vez.");
-          return state;
+      // 1. Perfil / E-mail
+      try {
+        const meRes = await fetchApi("https://account-backend.bhvr.com/players/me", token);
+        if (meRes.status === 401) {
+          throw new Error("UNAUTHORIZED");
         }
-
-        // Obter o e-mail do usuário no contexto da página já carregada
-        const email = await fetchUserEmail(statistics);
-        if (email) {
-          db.userEmail = email;
-          saveUserEmail(email);
-          console.log(`[Collector] E-mail do usuário ativo obtido após carregamento: ${email}`);
-        }
-
-        const result = await statistics.webContents.executeJavaScript(metricsScript);
-        await ingestOfficialMetrics(db, { source_url: STATISTICS_URL, captured_at: new Date().toISOString(), metrics: result.metrics });
-        await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-dom", captured_at: new Date().toISOString(), raw: result }]);
-        const regularTrials = await statistics.webContents.executeJavaScript(`(async () => {
-          const target = [...document.querySelectorAll("button,a,[role=tab]")].find(node => /regular trials/i.test(node.textContent || ""));
-          if (target) { target.click(); await new Promise(resolve => setTimeout(resolve, 1800)); }
-          return (${metricsScript});
-        })()`);
-        await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: "statistics-regular-trials-dom", captured_at: new Date().toISOString(), raw: regularTrials }]);
-        for (const roleName of ["Survivor", "Killer"]) {
-          // Clica na aba correspondente (suporta Inglês e Português)
-          await statistics.webContents.executeJavaScript(`(() => {
-            const target = [...document.querySelectorAll("button,a,[role=tab]")]
-              .find(node => {
-                const text = (node.textContent || "").trim().toLowerCase();
-                return ${roleName === "Survivor"} 
-                  ? ["survivor", "sobrevivente"].includes(text)
-                  : ["killer", "assassino"].includes(text);
-              });
-            if (target) {
-              target.click();
-              return true;
-            }
-            return false;
-          })()`).catch(err => console.warn(`[Collector] Erro ao clicar na aba ${roleName}:`, err.message));
-
-          // Aguarda a renderização ou transição da página
-          await new Promise(resolve => setTimeout(resolve, 2500));
-
-          // Extrai os dados em um passo separado para evitar erros de navegação abortada
-          const detail = await statistics.webContents.executeJavaScript(characterDetailScript)
-            .catch(err => {
-              console.error(`[Collector] Erro na execução de characterDetailScript para ${roleName}:`, err.message);
-              return { character: null, values: {} };
-            });
-
-          if (detail && detail.character) {
-            const topValues = detail.image ? { ...detail.values, image: detail.image } : detail.values;
-            await ingestTopCharacter(db, {
-              section: "regular-trials", period: "all-time", role: roleName.toLowerCase(),
-              character: detail.character, captured_at: new Date().toISOString(), values: topValues
-            });
+        if (meRes.ok) {
+          const profile = await meRes.json();
+          if (profile?.email && db.userEmail !== profile.email) {
+            db.userEmail = profile.email;
+            saveConfig({ userEmail: profile.email });
           }
-          await ingestSnapshots(db, [{ source_url: STATISTICS_URL, kind: `statistics-regular-trials-${roleName.toLowerCase()}-dom`, captured_at: new Date().toISOString(), raw: detail }]);
         }
-        
-        lastStatsScrapeTime = now;
-        
-        const historyUrl = await statistics.webContents.executeJavaScript(
-          `[...document.links].map(link => link.href).find(href => /match.*history|history.*match/i.test(href)) || ${JSON.stringify(HISTORY_URL)}`
-        );
-        await load(historyUrl, false);
-      } else {
-        console.log("[Collector] Pulando estatísticas globais, carregando histórico de partidas diretamente...");
-        const historyPage = await load(HISTORY_URL, true);
-        if (!loggedIn) {
-          status("Sessao expirada. Abra o login uma vez.");
-          return state;
-        }
+      } catch (err) {
+        if (err.message === "UNAUTHORIZED") throw err;
+        console.warn("[Collector] Falha ao verificar /players/me:", err.message);
+      }
 
-        const email = await fetchUserEmail(historyPage);
-        if (email) {
-          db.userEmail = email;
-          saveUserEmail(email);
+      // 2. Estatísticas Globais (Overview)
+      const statsUrl = `https://account-backend.bhvr.com/player-stats/games/dbd/providers/${provider}?lang=en`;
+      try {
+        const statsRes = await fetchApi(statsUrl, token);
+        if (statsRes.status === 401) throw new Error("UNAUTHORIZED");
+        if (statsRes.ok) {
+          const statsPayload = await statsRes.json();
+          await processPayload(statsUrl, statsPayload);
         }
+      } catch (err) {
+        if (err.message === "UNAUTHORIZED") throw err;
+        console.warn("[Collector] Falha ao buscar estatísticas gerais:", err.message);
+      }
+
+      // 3. Estatísticas Regular Trials
+      const regularUrl = `https://account-backend.bhvr.com/player-stats/games/dbd/providers/${provider}?lang=en&matchCategory=Regular`;
+      try {
+        const regRes = await fetchApi(regularUrl, token);
+        if (regRes.status === 401) throw new Error("UNAUTHORIZED");
+        if (regRes.ok) {
+          const regPayload = await regRes.json();
+          await processPayload(regularUrl, regPayload);
+        }
+      } catch (err) {
+        if (err.message === "UNAUTHORIZED") throw err;
+        console.warn("[Collector] Falha ao buscar estatísticas de regular trials:", err.message);
+      }
+
+      // 4. Histórico de Partidas
+      const historyUrl = `https://account-backend.bhvr.com/player-stats/match-history/games/dbd/providers/${provider}?lang=en&limit=10`;
+      try {
+        const historyRes = await fetchApi(historyUrl, token);
+        if (historyRes.status === 401) throw new Error("UNAUTHORIZED");
+        if (historyRes.ok) {
+          const historyPayload = await historyRes.json();
+          await processPayload(historyUrl, historyPayload);
+        }
+      } catch (err) {
+        if (err.message === "UNAUTHORIZED") throw err;
+        console.warn("[Collector] Falha ao buscar histórico de partidas:", err.message);
       }
 
       lastRun = new Date().toISOString();
-      status("Dados updated automaticamente.");
+      loggedIn = true;
+      status("Dados atualizados via API.");
     } catch (error) {
-      status(`Falha na coleta: ${error.message}`);
+      if (error.message === "UNAUTHORIZED") {
+        loggedIn = false;
+        cachedAuthStore = null;
+        saveConfig({ authStore: null });
+        status("Sessao expirada. Abra o login uma vez.");
+      } else {
+        status(`Falha na coleta: ${error.message}`);
+      }
     } finally {
       collecting = false;
       status(state.message);
-      scheduleBrowserRelease();
     }
+
     return state;
   }
 
-  function scheduleBrowserRelease() {
-    clearTimeout(releaseTimer);
-    releaseTimer = setTimeout(async () => {
-      if (browser && !browser.isDestroyed() && browser.isVisible()) {
-        return; // Não fecha se o usuário estiver visualizando a janela de login
-      }
-      if (!collecting && browser && !browser.isDestroyed()) {
-        // Garante que os cookies de sessão sejam salvos em disco antes de destruir
-        try {
-          await browser.webContents.session.cookies.flushStore();
-        } catch {}
-        console.log("[Collector] Liberando browser oculto para economizar memória.");
-        browser.forceClose = true;
-        browser.close();
-        browser = null;
-        pendingResponses.clear();
-      }
-    }, 30_000); // 30 segundos após a coleta
-  }
-
   async function showLogin() {
-    clearTimeout(releaseTimer); // Não destruir o browser enquanto o usuário faz login
-    const instance = ensureBrowser();
-    instance.show();
-    instance.focus();
-    await instance.loadURL(STATISTICS_URL);
-    status("Faca login na janela oficial e clique em Concluir login.");
+    stopLoginWatcher();
+    const win = ensureBrowser(true);
+    await win.loadURL("https://stats.deadbydaylight.com/");
+    status("Faca login na janela oficial e o token sera capturado automaticamente.");
+    startLoginWatcher(win);
   }
 
   async function finishLogin() {
-    const b = ensureBrowser();
-    b.hide();
-    return collect();
+    const win = ensureBrowser(false);
+    const token = await checkAndExtractAuth(win);
+    stopLoginWatcher();
+    if (win && !win.isDestroyed()) {
+      win.hide();
+    }
+    if (token) {
+      status("Login concluído com sucesso!");
+      return collect();
+    } else {
+      status("Login ainda não detectado. Por favor, conclua o login na janela.");
+      return state;
+    }
   }
 
   async function clearLogin() {
+    stopLoginWatcher();
     loggedIn = false;
+    cachedAuthStore = null;
     db.userEmail = null;
-    saveUserEmail(null);
+    saveConfig({ authStore: null, userEmail: null });
     status("Login limpo. Faca login novamente.");
     if (browser && !browser.isDestroyed()) {
       await browser.webContents.session.clearStorageData();
+      browser.forceClose = true;
+      browser.close();
+      browser = null;
     } else {
       await session.fromPartition("persist:dbd-official").clearStorageData();
     }
@@ -644,7 +643,7 @@ export function createBackgroundCollector(db, onStatus) {
 
   function stop() {
     clearInterval(timer);
-    clearTimeout(releaseTimer);
+    stopLoginWatcher();
     if (browser && !browser.isDestroyed()) {
       browser.forceClose = true;
       browser.close();
@@ -652,5 +651,13 @@ export function createBackgroundCollector(db, onStatus) {
     }
   }
 
-  return { start, stop, collect, showLogin, finishLogin, clearLogin, getState: () => state };
+  return {
+    start,
+    stop,
+    collect,
+    showLogin,
+    finishLogin,
+    clearLogin,
+    getState: () => state
+  };
 }

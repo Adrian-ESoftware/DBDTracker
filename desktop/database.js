@@ -731,8 +731,9 @@ async function catalog(db) {
 export async function topCharacters(db) {
   const userEmail = db.userEmail ?? "default";
   const images = await catalog(db);
+  let rows = [];
   if (db.type === "sqlite") {
-    return db.db.prepare("SELECT section,period,role,character,captured_at,raw_json FROM top_character_stats WHERE user_email = ? ORDER BY role").all(userEmail)
+    rows = db.db.prepare("SELECT section,period,role,character,captured_at,raw_json FROM top_character_stats WHERE user_email = ? ORDER BY role").all(userEmail)
       .map(row => {
         const values = parse(row.raw_json);
         const img = values.image || images.characters.get(row.character);
@@ -745,7 +746,7 @@ export async function topCharacters(db) {
       .select("section,period,role,character,captured_at,raw_json")
       .eq("user_email", userEmail)
       .order("role", { ascending: true }));
-    return (data || []).map(row => {
+    rows = (data || []).map(row => {
       const values = parse(row.raw_json);
       const img = values.image || images.characters.get(row.character);
       delete values.image;
@@ -757,6 +758,62 @@ export async function topCharacters(db) {
       };
     });
   }
+
+  if (rows.length > 0) return rows;
+
+  // Fallback: deriva os top characters a partir das partidas armazenadas
+  if (db.type === "sqlite") {
+    const emailFilter = userEmail !== "default" && userEmail ? userEmail : null;
+    const query = emailFilter
+      ? `SELECT role, character, COUNT(*) as matches_count,
+                SUM(CASE WHEN result LIKE '%escape%' OR result LIKE '%fugiu%' OR result LIKE '%win%' OR (role='killer' AND result LIKE '%K' AND CAST(SUBSTR(result,1,1) AS INTEGER) >= 3) THEN 1 ELSE 0 END) as wins_count,
+                AVG(score) as avg_bp,
+                SUM(score) as total_bp
+         FROM matches
+         WHERE user_email = ? AND character IS NOT NULL AND character != '?'
+         GROUP BY role, character
+         ORDER BY matches_count DESC`
+      : `SELECT role, character, COUNT(*) as matches_count,
+                SUM(CASE WHEN result LIKE '%escape%' OR result LIKE '%fugiu%' OR result LIKE '%win%' OR (role='killer' AND result LIKE '%K' AND CAST(SUBSTR(result,1,1) AS INTEGER) >= 3) THEN 1 ELSE 0 END) as wins_count,
+                AVG(score) as avg_bp,
+                SUM(score) as total_bp
+         FROM matches
+         WHERE (user_email IS NULL OR user_email = 'default') AND character IS NOT NULL AND character != '?'
+         GROUP BY role, character
+         ORDER BY matches_count DESC`;
+    const candidates = db.db.prepare(query).all(...(emailFilter ? [emailFilter] : []));
+    const byRole = {};
+    for (const c of candidates) {
+      if (!byRole[c.role]) {
+        byRole[c.role] = c;
+      }
+    }
+    const derived = [];
+    for (const roleName of ["survivor", "killer"]) {
+      const c = byRole[roleName];
+      if (c) {
+        const rateLabel = roleName === "survivor" ? "Escape Rate" : "Kill Rate";
+        const rateVal = percentage(c.wins_count, c.matches_count) + "%";
+        derived.push({
+          section: "regular-trials",
+          period: "all-time",
+          role: roleName,
+          character: c.character,
+          captured_at: new Date().toISOString(),
+          image: images.characters.get(c.character),
+          values: {
+            "Matches played": String(c.matches_count),
+            [rateLabel]: rateVal,
+            "Total Bloodpoints earned": String(Math.round(c.total_bp || 0)),
+            "Average Bloodpoints earned": String(Math.round(c.avg_bp || 0))
+          }
+        });
+      }
+    }
+    return derived;
+  }
+
+  return [];
 }
 
 export async function matches(db, limit = 100) {
