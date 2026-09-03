@@ -195,12 +195,21 @@ function indexAssets(db, value) {
   const visit = value => {
     if (Array.isArray(value)) return value.forEach(visit);
     if (!value || typeof value !== "object") return;
-    if (value.name && value.image?.path) {
+    const name = value.name || value.character_name || value.loadout_perk_name || value.character;
+    if (name && value.image?.path) {
       const path = value.image.path;
       const type = path.startsWith("characters/") ? "characters" : path.startsWith("maps/") ? "maps" :
         path.startsWith("perks/") ? "perks" : path.startsWith("items/") ? "items" :
         path.startsWith("add-ons/") ? "addons" : path.startsWith("offerings/") ? "offerings" : null;
-      if (type) upsert.run(type, value.name, asset(path));
+      if (type) {
+        upsert.run(type, name, asset(path));
+        if (value.character_id && value.character_id !== name) {
+          upsert.run(type, value.character_id, asset(path));
+        }
+        if (value.loadout_perk_id && value.loadout_perk_id !== name) {
+          upsert.run(type, value.loadout_perk_id, asset(path));
+        }
+      }
     }
     Object.values(value).forEach(visit);
   };
@@ -214,7 +223,8 @@ async function indexAssetsSupabase(supabase, value) {
       return;
     }
     if (!val || typeof val !== "object") return;
-    if (val.name && val.image?.path) {
+    const name = val.name || val.character_name || val.loadout_perk_name || val.character;
+    if (name && val.image?.path) {
       const path = val.image.path;
       const type = path.startsWith("characters/") ? "characters" : path.startsWith("maps/") ? "maps" :
         path.startsWith("perks/") ? "perks" : path.startsWith("items/") ? "items" :
@@ -222,9 +232,23 @@ async function indexAssetsSupabase(supabase, value) {
       if (type) {
         check(await supabase.from("assets").upsert({
           type,
-          name: val.name,
+          name,
           url: asset(path)
         }));
+        if (val.character_id && val.character_id !== name) {
+          check(await supabase.from("assets").upsert({
+            type,
+            name: val.character_id,
+            url: asset(path)
+          }));
+        }
+        if (val.loadout_perk_id && val.loadout_perk_id !== name) {
+          check(await supabase.from("assets").upsert({
+            type,
+            name: val.loadout_perk_id,
+            url: asset(path)
+          }));
+        }
       }
     }
     for (const item of Object.values(val)) {
@@ -633,18 +657,64 @@ export async function officialMetrics(db) {
 
 export async function ingestOfficialSections(db, payload) {
   const userEmail = db.userEmail ?? "default";
+  const capturedAt = payload.captured_at || new Date().toISOString();
+  const section = payload.section ?? "regular-trials";
+
   if (db.type === "sqlite") {
     const upsert = db.db.prepare(`INSERT INTO official_sections (section,period,role,captured_at,raw_json,user_email)
       VALUES (?,?,?,?,?,?) ON CONFLICT(section,period,role,user_email) DO UPDATE SET
       captured_at=excluded.captured_at,raw_json=excluded.raw_json`);
+    const upsertTop = db.db.prepare(`INSERT INTO top_character_stats (section,period,role,character,captured_at,raw_json,user_email)
+      VALUES (?,?,?,?,?,?,?) ON CONFLICT(section,period,role,user_email) DO UPDATE SET
+      character=excluded.character,captured_at=excluded.captured_at,raw_json=excluded.raw_json`);
     let received = 0;
     db.db.exec("BEGIN");
     try {
+      if (payload.data) {
+        indexAssets(db.db, payload.data);
+      }
       for (const [period, periodData] of Object.entries(payload.data ?? {})) {
-        if (!periodData?.global) continue;
-        for (const [role, values] of Object.entries(periodData.global)) {
-          upsert.run(payload.section ?? "overview", period, role, payload.captured_at, JSON.stringify(values), userEmail);
-          received++;
+        if (!periodData) continue;
+        if (periodData.global) {
+          for (const [role, values] of Object.entries(periodData.global)) {
+            upsert.run(section, period, role, capturedAt, JSON.stringify(values), userEmail);
+            received++;
+          }
+        }
+        if (periodData.characters) {
+          const killers = Array.isArray(periodData.characters.killers) ? [...periodData.characters.killers] : [];
+          killers.sort((a, b) => (b.matches_played || 0) - (a.matches_played || 0) || (b.hours_played_in_match || 0) - (a.hours_played_in_match || 0));
+          const topK = killers[0];
+          if (topK) {
+            const charName = topK.character_name || topK.character_id;
+            const values = {
+              "Partidas": topK.matches_played,
+              "Horas": (Math.round((topK.hours_played_in_match || 0) * 10) / 10) + "h",
+              "Taxa de Kill": Math.round((topK.kill_rate || 0) * 100) + "%",
+              "Abates": topK.survivors_killed,
+              "Ganchos": topK.killer_hooks,
+              "Perseguições": topK.killer_chases_won,
+              "image": topK.image?.path ? asset(topK.image.path) : undefined
+            };
+            upsertTop.run(section, period, "killer", charName, capturedAt, JSON.stringify(values), userEmail);
+          }
+
+          const survivors = Array.isArray(periodData.characters.survivors) ? [...periodData.characters.survivors] : [];
+          survivors.sort((a, b) => (b.matches_played || 0) - (a.matches_played || 0) || (b.hours_played_in_match || 0) - (a.hours_played_in_match || 0));
+          const topS = survivors[0];
+          if (topS) {
+            const charName = topS.character_name || topS.character_id;
+            const values = {
+              "Partidas": topS.matches_played,
+              "Horas": (Math.round((topS.hours_played_in_match || 0) * 10) / 10) + "h",
+              "Taxa de Fuga": Math.round((topS.escape_rate || 0) * 100) + "%",
+              "Fugas": topS.matches_escaped,
+              "Perseguições": topS.survivor_chases_won,
+              "Curas": topS.survivor_successfully_healed,
+              "image": topS.image?.path ? asset(topS.image.path) : undefined
+            };
+            upsertTop.run(section, period, "survivor", charName, capturedAt, JSON.stringify(values), userEmail);
+          }
         }
       }
       db.db.exec("COMMIT");
@@ -656,18 +726,74 @@ export async function ingestOfficialSections(db, payload) {
   } else {
     const supabase = db.client;
     let received = 0;
+    if (payload.data) {
+      await indexAssetsSupabase(supabase, payload.data);
+    }
     for (const [period, periodData] of Object.entries(payload.data ?? {})) {
-      if (!periodData?.global) continue;
-      for (const [role, values] of Object.entries(periodData.global)) {
-        await supabase.from("official_sections").upsert({
-          section: payload.section ?? "overview",
-          period,
-          role,
-          captured_at: payload.captured_at,
-          raw_json: values,
-          user_email: userEmail
-        });
-        received++;
+      if (!periodData) continue;
+      if (periodData.global) {
+        for (const [role, values] of Object.entries(periodData.global)) {
+          await supabase.from("official_sections").upsert({
+            section,
+            period,
+            role,
+            captured_at: capturedAt,
+            raw_json: values,
+            user_email: userEmail
+          });
+          received++;
+        }
+      }
+      if (periodData.characters) {
+        const killers = Array.isArray(periodData.characters.killers) ? [...periodData.characters.killers] : [];
+        killers.sort((a, b) => (b.matches_played || 0) - (a.matches_played || 0) || (b.hours_played_in_match || 0) - (a.hours_played_in_match || 0));
+        const topK = killers[0];
+        if (topK) {
+          const charName = topK.character_name || topK.character_id;
+          const values = {
+            "Partidas": topK.matches_played,
+            "Horas": (Math.round((topK.hours_played_in_match || 0) * 10) / 10) + "h",
+            "Taxa de Kill": Math.round((topK.kill_rate || 0) * 100) + "%",
+            "Abates": topK.survivors_killed,
+            "Ganchos": topK.killer_hooks,
+            "Perseguições": topK.killer_chases_won,
+            "image": topK.image?.path ? asset(topK.image.path) : undefined
+          };
+          await supabase.from("top_character_stats").upsert({
+            section,
+            period,
+            role: "killer",
+            character: charName,
+            captured_at: capturedAt,
+            raw_json: values,
+            user_email: userEmail
+          });
+        }
+
+        const survivors = Array.isArray(periodData.characters.survivors) ? [...periodData.characters.survivors] : [];
+        survivors.sort((a, b) => (b.matches_played || 0) - (a.matches_played || 0) || (b.hours_played_in_match || 0) - (a.hours_played_in_match || 0));
+        const topS = survivors[0];
+        if (topS) {
+          const charName = topS.character_name || topS.character_id;
+          const values = {
+            "Partidas": topS.matches_played,
+            "Horas": (Math.round((topS.hours_played_in_match || 0) * 10) / 10) + "h",
+            "Taxa de Fuga": Math.round((topS.escape_rate || 0) * 100) + "%",
+            "Fugas": topS.matches_escaped,
+            "Perseguições": topS.survivor_chases_won,
+            "Curas": topS.survivor_successfully_healed,
+            "image": topS.image?.path ? asset(topS.image.path) : undefined
+          };
+          await supabase.from("top_character_stats").upsert({
+            section,
+            period,
+            role: "survivor",
+            character: charName,
+            captured_at: capturedAt,
+            raw_json: values,
+            user_email: userEmail
+          });
+        }
       }
     }
     return { received };
@@ -677,13 +803,14 @@ export async function ingestOfficialSections(db, payload) {
 export async function officialSections(db) {
   const userEmail = db.userEmail ?? "default";
   if (db.type === "sqlite") {
-    return db.db.prepare("SELECT section,period,role,captured_at,raw_json FROM official_sections WHERE user_email = ? ORDER BY period,role").all(userEmail)
+    return db.db.prepare("SELECT section,period,role,captured_at,raw_json FROM official_sections WHERE user_email = ? AND role IN ('killers','survivors','general') ORDER BY period,role").all(userEmail)
       .map(row => ({ ...row, values: parse(row.raw_json), raw_json: undefined }));
   } else {
     const { data } = check(await db.client
       .from("official_sections")
       .select("section,period,role,captured_at,raw_json")
       .eq("user_email", userEmail)
+      .in("role", ["killers", "survivors", "general"])
       .order("period", { ascending: true })
       .order("role", { ascending: true }));
     return (data || []).map(row => ({

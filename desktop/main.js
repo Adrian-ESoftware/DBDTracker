@@ -1,6 +1,6 @@
 import { config } from "dotenv";
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { spawn } from "node:child_process";
 
 // Carrega .env do diretório da aplicação (funciona tanto em dev quanto no exe empacotado)
@@ -94,7 +94,19 @@ let mapCheckStatus = { status: "initializing", monitor: null };
 let mapOverlayWindow = null;
 const mapOverlaysPath = join(import.meta.dirname, "map_overlays");
 const mapCatalogPath = join(import.meta.dirname, "dbd-map-catalog.json");
-let userConfig = { overlayCorner: "top-right", overlayOpacity: 70, overlaySize: 350, mapCheckEnabled: true, mapCheckLanguage: "pt-br" };
+let userConfig = {
+  overlayCorner: "top-right",
+  overlayOpacity: 70,
+  overlaySize: 350,
+  mapCheckEnabled: true,
+  mapCheckLanguage: "pt-br",
+  shortcutToggleOverlay: "CommandOrControl+Shift+F",
+  shortcutToggleClicks: "CommandOrControl+Shift+X",
+  shortcutCloseMap: "Backspace",
+  alwaysOnTop: true,
+  startWithSystem: false,
+  startMinimized: false
+};
 
 function loadUserConfig() {
   try {
@@ -114,6 +126,118 @@ function saveUserConfig() {
     writeFileSync(configPath, JSON.stringify(userConfig, null, 2), "utf-8");
   } catch (err) {
     console.error("[Main] Error saving config:", err);
+  }
+}
+
+function registerGlobalShortcuts() {
+  try {
+    globalShortcut.unregisterAll();
+  } catch {}
+
+  const toggleKey = userConfig.shortcutToggleOverlay || "CommandOrControl+Shift+F";
+  try {
+    const ok = globalShortcut.register(toggleKey, () => {
+      if (!window || window.isDestroyed()) return;
+      if (clickThrough) {
+        clickThrough = false;
+        window.setIgnoreMouseEvents(false);
+        window.show();
+        window.webContents.send("scrape-status", "Controle do mouse restaurado.");
+      } else {
+        window.isVisible() ? window.hide() : window.show();
+      }
+    });
+    if (!ok) console.warn(`[Main] Falha ao registrar atalho: ${toggleKey}`);
+  } catch (err) {
+    console.error(`[Main] Erro ao registrar atalho (${toggleKey}):`, err.message);
+  }
+
+  const clickKey = userConfig.shortcutToggleClicks || "CommandOrControl+Shift+X";
+  try {
+    const ok = globalShortcut.register(clickKey, () => {
+      if (!window || window.isDestroyed()) return;
+      clickThrough = !clickThrough;
+      window.setIgnoreMouseEvents(clickThrough, { forward: true });
+    });
+    if (!ok) console.warn(`[Main] Falha ao registrar atalho: ${clickKey}`);
+  } catch (err) {
+    console.error(`[Main] Erro ao registrar atalho (${clickKey}):`, err.message);
+  }
+
+  if (mapOverlayWindow && !mapOverlayWindow.isDestroyed() && mapOverlayWindow.isVisible()) {
+    registerMapCloseShortcut();
+  }
+}
+
+function registerMapCloseShortcut() {
+  const closeKey = userConfig.shortcutCloseMap || "Backspace";
+  try {
+    globalShortcut.register(closeKey, () => {
+      if (mapOverlayWindow && !mapOverlayWindow.isDestroyed()) {
+        mapOverlayWindow.close();
+      }
+    });
+  } catch (err) {
+    console.warn(`[Main] Falha ao registrar atalho (${closeKey}):`, err.message);
+  }
+}
+
+function unregisterMapCloseShortcut() {
+  const closeKey = userConfig.shortcutCloseMap || "Backspace";
+  try {
+    globalShortcut.unregister(closeKey);
+  } catch (err) {}
+}
+
+const isMinimizedArg = process.argv.includes("--minimized");
+
+function applyStartWithSystem(enabled, startMinimized) {
+  if (process.platform === "win32" || process.platform === "darwin") {
+    try {
+      app.setLoginItemSettings({
+        openAtLogin: !!enabled,
+        openAsHidden: !!startMinimized
+      });
+    } catch (err) {
+      console.warn("[Main] Falha ao configurar app.setLoginItemSettings:", err.message);
+    }
+  } else if (process.platform === "linux") {
+    try {
+      const autostartDir = process.env.XDG_CONFIG_HOME
+        ? join(process.env.XDG_CONFIG_HOME, "autostart")
+        : join(app.getPath("home"), ".config", "autostart");
+      const desktopFile = join(autostartDir, "dbd-tracker.desktop");
+
+      if (enabled) {
+        if (!existsSync(autostartDir)) {
+          mkdirSync(autostartDir, { recursive: true });
+        }
+        const execPath = process.env.APPIMAGE || process.execPath;
+        const iconPath = join(import.meta.dirname, "tray_icons", "Icon.png");
+        const args = startMinimized ? " --minimized" : "";
+        const content = [
+          "[Desktop Entry]",
+          "Type=Application",
+          "Name=DBD Tracker",
+          "Comment=Dead by Daylight Match Tracker Overlay",
+          `Exec="${execPath}"${args}`,
+          `Icon=${iconPath}`,
+          "Terminal=false",
+          "Categories=Game;Utility;",
+          "X-GNOME-Autostart-enabled=true"
+        ].join("\n") + "\n";
+
+        writeFileSync(desktopFile, content, "utf-8");
+        console.log("[Main] Autostart no Linux configurado em:", desktopFile);
+      } else {
+        if (existsSync(desktopFile)) {
+          unlinkSync(desktopFile);
+          console.log("[Main] Autostart no Linux removido:", desktopFile);
+        }
+      }
+    } catch (err) {
+      console.warn("[Main] Falha ao configurar autostart no Linux:", err.message);
+    }
   }
 }
 
@@ -146,9 +270,13 @@ function createWindow() {
     }
   });
   const alwaysOnTopLevel = process.platform === "win32" || process.platform === "darwin" ? "screen-saver" : "floating";
-  window.setAlwaysOnTop(true, alwaysOnTopLevel);
+  window.setAlwaysOnTop(userConfig.alwaysOnTop !== false, alwaysOnTopLevel);
   window.loadFile(join(import.meta.dirname, "overlay.html"));
-  window.once("ready-to-show", () => window.show());
+  window.once("ready-to-show", () => {
+    if (!userConfig.startMinimized && !isMinimizedArg) {
+      window.show();
+    }
+  });
 
   // Intercepta o fechamento da janela para apenas ocultar
   window.on("close", (event) => {
@@ -382,22 +510,12 @@ function createMapOverlayWindow(mapName) {
   mapOverlayWindow.once("ready-to-show", () => {
     if (mapOverlayWindow && !mapOverlayWindow.isDestroyed()) {
       mapOverlayWindow.showInactive();
-      try {
-        globalShortcut.register("Backspace", () => {
-          if (mapOverlayWindow && !mapOverlayWindow.isDestroyed()) {
-            mapOverlayWindow.close();
-          }
-        });
-      } catch (err) {
-        console.warn("[Main] Failed to register Backspace shortcut:", err);
-      }
+      registerMapCloseShortcut();
     }
   });
 
   mapOverlayWindow.on("closed", () => {
-    try {
-      globalShortcut.unregister("Backspace");
-    } catch (err) {}
+    unregisterMapCloseShortcut();
   });
 }
 
@@ -449,7 +567,8 @@ app.whenReady().then(() => {
   createTray();
 
   // Adia operações pesadas para após a janela aparecer (startup mais rápido)
-  window.once("show", () => {
+  const startServices = () => {
+    if (server) return;
     server = startServer(db, 8765, mapOverlaysPath);
     collector = createBackgroundCollector(db, state => {
       if (window && !window.isDestroyed()) {
@@ -460,21 +579,18 @@ app.whenReady().then(() => {
     setTimeout(() => collector.start(), 2000);
     // Inicia o detector de mapas
     setTimeout(() => startMapCheck(), 1000);
-  });
-  globalShortcut.register("CommandOrControl+Shift+F", () => {
-    if (clickThrough) {
-      clickThrough = false;
-      window.setIgnoreMouseEvents(false);
-      window.show();
-      window.webContents.send("scrape-status", "Controle do mouse restaurado.");
-    } else {
-      window.isVisible() ? window.hide() : window.show();
-    }
-  });
-  globalShortcut.register("CommandOrControl+Shift+X", () => {
-    clickThrough = !clickThrough;
-    window.setIgnoreMouseEvents(clickThrough, { forward: true });
-  });
+  };
+
+  window.once("show", startServices);
+  if (userConfig.startMinimized || isMinimizedArg) {
+    setTimeout(startServices, 1000);
+  }
+
+  if (userConfig.startWithSystem) {
+    applyStartWithSystem(true, userConfig.startMinimized);
+  }
+
+  registerGlobalShortcuts();
 });
 
 ipcMain.on("hide-overlay", () => window.hide());
@@ -514,10 +630,35 @@ ipcMain.handle("save-overlay-settings", (_, settings) => {
   loadUserConfig();
   const oldEnabled = userConfig.mapCheckEnabled !== false;
   const oldLanguage = userConfig.mapCheckLanguage || "pt-br";
+  const oldAlwaysOnTop = userConfig.alwaysOnTop !== false;
+  const oldStartWithSystem = !!userConfig.startWithSystem;
+
   userConfig = { ...userConfig, ...settings };
   saveUserConfig();
+
+  // Re-registra atalhos globais se algum atalho foi alterado
+  if (
+    settings.shortcutToggleOverlay !== undefined ||
+    settings.shortcutToggleClicks !== undefined ||
+    settings.shortcutCloseMap !== undefined
+  ) {
+    registerGlobalShortcuts();
+  }
+
+  // Atualiza Always on Top
+  if (settings.alwaysOnTop !== undefined && settings.alwaysOnTop !== oldAlwaysOnTop && window && !window.isDestroyed()) {
+    const alwaysOnTopLevel = process.platform === "win32" || process.platform === "darwin" ? "screen-saver" : "floating";
+    window.setAlwaysOnTop(!!userConfig.alwaysOnTop, alwaysOnTopLevel);
+  }
+
+  // Atualiza Inicialização com Sistema
+  if (settings.startWithSystem !== undefined && settings.startWithSystem !== oldStartWithSystem) {
+    applyStartWithSystem(userConfig.startWithSystem, userConfig.startMinimized);
+  }
+
   if (mapOverlayWindow && !mapOverlayWindow.isDestroyed()) {
     positionOverlayWindow();
+    setOverlayWindowOpacity();
   }
   const newEnabled = userConfig.mapCheckEnabled !== false;
   if (oldEnabled !== newEnabled) {

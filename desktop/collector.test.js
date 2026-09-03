@@ -204,3 +204,96 @@ test("ingestão de payload oficial da API BHVR no banco SQLite", async () => {
   assert.equal(ov.survivor_escape_rate, 100);
 });
 
+test("ingestão de payload completo da API BHVR player-stats Regular (characters, perks, global)", async () => {
+  const { openDatabase, ingestOfficialSections, officialSections, topCharacters } = await import("./database.js");
+  const db = openDatabase(":memory:");
+
+  const bhvrPayload = {
+    data: {
+      "30-days": {
+        characters: {
+          killers: [
+            {
+              character_id: "K30",
+              character_name: "The Knight",
+              matches_played: 2,
+              kill_rate: 0.5,
+              hours_played_in_match: 0.4,
+              survivors_killed: 4,
+              killer_hooks: 9,
+              killer_chases_won: 17,
+              image: { path: "characters/killers/K30.png" }
+            }
+          ],
+          survivors: [
+            {
+              character_id: "Nea",
+              character_name: "Nea Karlsson",
+              matches_played: 30,
+              escape_rate: 0.533333,
+              matches_escaped: 16,
+              hours_played_in_match: 4.6,
+              survivor_chases_won: 82,
+              survivor_successfully_healed: 117,
+              image: { path: "characters/survivors/Nea.png" }
+            },
+            {
+              character_id: "Kate",
+              character_name: "Kate Denson",
+              matches_played: 3,
+              escape_rate: 0.333333,
+              matches_escaped: 1,
+              hours_played_in_match: 0.4,
+              image: { path: "characters/survivors/Kate.png" }
+            }
+          ]
+        },
+        perks: {
+          survivors: [
+            { loadout_perk_id: "Lithe", loadout_perk_name: "Lithe", matches_played: 35, pick_rate: 0.897, image: { path: "perks/Lithe.png" } }
+          ],
+          killers: [
+            { loadout_perk_id: "Hex_Devour_Hope", loadout_perk_name: "Hex: Devour Hope", matches_played: 2, pick_rate: 1, image: { path: "perks/Hex_Devour_Hope.png" } }
+          ]
+        },
+        global: {
+          killers: { totalHoursPlayed: 0.4, totalMatchesPlayed: 2, avgKillRate: 0.5, totalKills: 4, totalHooks: 9 },
+          survivors: { totalHoursPlayed: 6, totalMatchesPlayed: 39, escapeRate: 0.512821, matchesEscaped: 20 },
+          general: { totalHoursPlayed: 6.3, totalMatchesPlayed: 41, bpEarnedThroughMatch: 3931617 }
+        }
+      }
+    }
+  };
+
+  await ingestOfficialSections(db, {
+    data: bhvrPayload.data,
+    section: "regular-trials",
+    captured_at: "2026-09-03T12:00:00Z"
+  });
+
+  const sections = await officialSections(db);
+  assert.equal(sections.length, 3);
+  const survGlobal = sections.find(s => s.role === "survivors");
+  assert.equal(survGlobal.values.totalMatchesPlayed, 39);
+  assert.equal(survGlobal.values.escapeRate, 0.512821);
+
+  const top = await topCharacters(db);
+  assert.equal(top.length, 2);
+  const topSurv = top.find(t => t.role === "survivor");
+  const topKil = top.find(t => t.role === "killer");
+
+  assert.equal(topSurv.character, "Nea Karlsson");
+  assert.equal(topSurv.values["Partidas"], 30);
+  assert.equal(topSurv.values["Taxa de Fuga"], "53%");
+  assert.equal(topSurv.image, "https://assets.live.bhvraccount.com/characters/survivors/Nea.png");
+
+  assert.equal(topKil.character, "The Knight");
+  assert.equal(topKil.values["Partidas"], 2);
+  assert.equal(topKil.values["Taxa de Kill"], "50%");
+  assert.equal(topKil.image, "https://assets.live.bhvraccount.com/characters/killers/K30.png");
+
+  // Assets catalog
+  const perkAssets = db.db.prepare("SELECT url FROM assets WHERE name='Lithe'").get();
+  assert.equal(perkAssets.url, "https://assets.live.bhvraccount.com/perks/Lithe.png");
+});
+
