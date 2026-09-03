@@ -306,6 +306,18 @@ h2:first-child{margin-top:2px}
           <button id="btn-trends-global" style="font-size:10px; font-weight:700; padding:2px 8px;">Comunidade</button>
         </div>
       </div>
+      <h2>Personagens Mais Jogados (Oficial)</h2>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
+        <div>
+          <div style="font-size:9px;font-weight:700;color:var(--red);text-transform:uppercase;margin-bottom:6px;letter-spacing:.08em">Survivors</div>
+          <div class="bars" id="characters-own-survivor"></div>
+        </div>
+        <div>
+          <div style="font-size:9px;font-weight:700;color:var(--red);text-transform:uppercase;margin-bottom:6px;letter-spacing:.08em">Killers</div>
+          <div class="bars" id="characters-own-killer"></div>
+        </div>
+      </div>
+
       <h2>Perks do Usuário</h2>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
         <div>
@@ -825,9 +837,11 @@ async function load() {
       get('/stats/perks?scope=others-survivor' + (trendsGlobal ? '&global=true' : '')),
       get('/stats/perks?scope=others-killer' + (trendsGlobal ? '&global=true' : '')),
       get('/top-characters'),
-      get('/assets')
+      get('/assets'),
+      get('/stats/characters?role=survivor'),
+      get('/stats/characters?role=killer')
     ]);
-    var o=results[0], k=results[1], m=results[2], recent=results[3], sections=results[4], pOwnSurv=results[5], pOwnKiller=results[6], pOthersSurv=results[7], pOthersKiller=results[8], top=results[9], allAssets=results[10];
+    var o=results[0], k=results[1], m=results[2], recent=results[3], sections=results[4], pOwnSurv=results[5], pOwnKiller=results[6], pOthersSurv=results[7], pOthersKiller=results[8], top=results[9], allAssets=results[10], cOwnSurv=results[11], cOwnKiller=results[12];
 
     // Build all image maps
     perkImages = {};
@@ -860,6 +874,8 @@ async function load() {
     characterSection('killerStats','killerTitle','killerCard', top, 'killer');
 
     // Page 2
+    bars('characters-own-survivor', cOwnSurv, 'character');
+    bars('characters-own-killer', cOwnKiller, 'character');
     bars('perks-own-survivor', pOwnSurv, 'perk');
     bars('perks-own-killer', pOwnKiller, 'perk');
     bars('perks-others-survivor', pOthersSurv, 'perk');

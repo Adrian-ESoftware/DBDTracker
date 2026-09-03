@@ -205,7 +205,7 @@ test("ingestão de payload oficial da API BHVR no banco SQLite", async () => {
 });
 
 test("ingestão de payload completo da API BHVR player-stats Regular (characters, perks, global)", async () => {
-  const { openDatabase, ingestOfficialSections, officialSections, topCharacters } = await import("./database.js");
+  const { openDatabase, ingestOfficialSections, officialSections, topCharacters, perks, characters } = await import("./database.js");
   const db = openDatabase(":memory:");
 
   const bhvrPayload = {
@@ -250,10 +250,10 @@ test("ingestão de payload completo da API BHVR player-stats Regular (characters
         },
         perks: {
           survivors: [
-            { loadout_perk_id: "Lithe", loadout_perk_name: "Lithe", matches_played: 35, pick_rate: 0.897, image: { path: "perks/Lithe.png" } }
+            { loadout_perk_id: "Lithe", loadout_perk_name: "Lithe", matches_played: 35, pick_rate: 0.897, escape_rate: 0.514, image: { path: "perks/Lithe.png" } }
           ],
           killers: [
-            { loadout_perk_id: "Hex_Devour_Hope", loadout_perk_name: "Hex: Devour Hope", matches_played: 2, pick_rate: 1, image: { path: "perks/Hex_Devour_Hope.png" } }
+            { loadout_perk_id: "Hex_Devour_Hope", loadout_perk_name: "Hex: Devour Hope", matches_played: 2, pick_rate: 1, kill_rate: 0.5, image: { path: "perks/Hex_Devour_Hope.png" } }
           ]
         },
         global: {
@@ -295,5 +295,27 @@ test("ingestão de payload completo da API BHVR player-stats Regular (characters
   // Assets catalog
   const perkAssets = db.db.prepare("SELECT url FROM assets WHERE name='Lithe'").get();
   assert.equal(perkAssets.url, "https://assets.live.bhvraccount.com/perks/Lithe.png");
+
+  // Perks oficiais do usuário
+  const survPerks = await perks(db, "own-survivor");
+  assert.equal(survPerks.length, 1);
+  assert.equal(survPerks[0].perk, "Lithe");
+  assert.equal(survPerks[0].count, 35);
+  assert.equal(survPerks[0].pct, 90);
+  assert.equal(survPerks[0].winrate, 51);
+
+  const kilPerks = await perks(db, "own-killer");
+  assert.equal(kilPerks.length, 1);
+  assert.equal(kilPerks[0].perk, "Hex: Devour Hope");
+  assert.equal(kilPerks[0].count, 2);
+  assert.equal(kilPerks[0].pct, 100);
+  assert.equal(kilPerks[0].winrate, 50);
+
+  // Personagens oficiais do usuário
+  const allChars = await characters(db);
+  assert.equal(allChars.length, 3);
+  const charSurv = allChars.find(c => c.character === "Nea Karlsson");
+  assert.equal(charSurv.count, 30);
+  assert.equal(charSurv.winrate, 53);
 });
 

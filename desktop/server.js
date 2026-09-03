@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ingestMatches, ingestOfficialMetrics, ingestOfficialSections, ingestSnapshots, ingestTopCharacter, killers, maps, matches, officialMetrics, officialSections, overview, perks, topCharacters, trends, assetImages } from "./database.js";
+import { ingestMatches, ingestOfficialMetrics, ingestOfficialSections, ingestSnapshots, ingestTopCharacter, killers, maps, matches, officialMetrics, officialSections, overview, perks, topCharacters, trends, assetImages, characters } from "./database.js";
 
 const allowedOrigin = origin => !origin || origin.startsWith("https://stats.deadbydaylight.com");
 const reply = (response, status, body, origin) => {
@@ -54,6 +54,7 @@ export function startServer(db, port = 8765, mapOverlaysPath = "") {
       if (url.pathname === "/api/stats/killers") return reply(response, 200, await killers(db, url.searchParams.get("global") === "true"), origin);
       if (url.pathname === "/api/stats/maps") return reply(response, 200, await maps(db, url.searchParams.get("global") === "true"), origin);
       if (url.pathname === "/api/stats/perks") return reply(response, 200, await perks(db, url.searchParams.get("scope") ?? "all", url.searchParams.get("global") === "true"), origin);
+      if (url.pathname === "/api/stats/characters") return reply(response, 200, await characters(db, url.searchParams.get("role") ?? "all"), origin);
       if (url.pathname === "/api/stats/trends") return reply(response, 200, await trends(db), origin);
       if (url.pathname === "/api/assets") return reply(response, 200, await assetImages(db, url.searchParams.get("type") || null), origin);
       if (url.pathname === "/api/matches") return reply(response, 200, await matches(db, Math.min(Number(url.searchParams.get("limit") ?? 100), 500)), origin);

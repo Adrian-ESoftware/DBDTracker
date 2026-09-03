@@ -1,6 +1,6 @@
 {
   "name": "dbd-tracker-overlay",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "DBD Stats Overlay",
   "author": "local",
   "private": true,

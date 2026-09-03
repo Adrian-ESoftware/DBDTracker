@@ -681,7 +681,25 @@ export async function ingestOfficialSections(db, payload) {
             received++;
           }
         }
+        if (periodData.perks) {
+          if (Array.isArray(periodData.perks.survivors)) {
+            upsert.run(section, period, "perks-survivor", capturedAt, JSON.stringify(periodData.perks.survivors), userEmail);
+            received++;
+          }
+          if (Array.isArray(periodData.perks.killers)) {
+            upsert.run(section, period, "perks-killer", capturedAt, JSON.stringify(periodData.perks.killers), userEmail);
+            received++;
+          }
+        }
         if (periodData.characters) {
+          if (Array.isArray(periodData.characters.survivors)) {
+            upsert.run(section, period, "characters-survivor", capturedAt, JSON.stringify(periodData.characters.survivors), userEmail);
+            received++;
+          }
+          if (Array.isArray(periodData.characters.killers)) {
+            upsert.run(section, period, "characters-killer", capturedAt, JSON.stringify(periodData.characters.killers), userEmail);
+            received++;
+          }
           const killers = Array.isArray(periodData.characters.killers) ? [...periodData.characters.killers] : [];
           killers.sort((a, b) => (b.matches_played || 0) - (a.matches_played || 0) || (b.hours_played_in_match || 0) - (a.hours_played_in_match || 0));
           const topK = killers[0];
@@ -744,7 +762,53 @@ export async function ingestOfficialSections(db, payload) {
           received++;
         }
       }
+      if (periodData.perks) {
+        if (Array.isArray(periodData.perks.survivors)) {
+          await supabase.from("official_sections").upsert({
+            section,
+            period,
+            role: "perks-survivor",
+            captured_at: capturedAt,
+            raw_json: periodData.perks.survivors,
+            user_email: userEmail
+          });
+          received++;
+        }
+        if (Array.isArray(periodData.perks.killers)) {
+          await supabase.from("official_sections").upsert({
+            section,
+            period,
+            role: "perks-killer",
+            captured_at: capturedAt,
+            raw_json: periodData.perks.killers,
+            user_email: userEmail
+          });
+          received++;
+        }
+      }
       if (periodData.characters) {
+        if (Array.isArray(periodData.characters.survivors)) {
+          await supabase.from("official_sections").upsert({
+            section,
+            period,
+            role: "characters-survivor",
+            captured_at: capturedAt,
+            raw_json: periodData.characters.survivors,
+            user_email: userEmail
+          });
+          received++;
+        }
+        if (Array.isArray(periodData.characters.killers)) {
+          await supabase.from("official_sections").upsert({
+            section,
+            period,
+            role: "characters-killer",
+            captured_at: capturedAt,
+            raw_json: periodData.characters.killers,
+            user_email: userEmail
+          });
+          received++;
+        }
         const killers = Array.isArray(periodData.characters.killers) ? [...periodData.characters.killers] : [];
         killers.sort((a, b) => (b.matches_played || 0) - (a.matches_played || 0) || (b.hours_played_in_match || 0) - (a.hours_played_in_match || 0));
         const topK = killers[0];
@@ -1306,6 +1370,49 @@ export async function maps(db, global = false) {
 export async function perks(db, scope = "against", global = false) {
   const userEmail = global ? null : (db.userEmail ?? null);
   const images = (await catalog(db)).perks;
+
+  if (!global && (scope === "own-survivor" || scope === "own-killer")) {
+    const roleTarget = scope === "own-survivor" ? "perks-survivor" : "perks-killer";
+    const emailKey = userEmail ?? "default";
+    let officialRow = null;
+    if (db.type === "sqlite") {
+      officialRow = db.db.prepare(
+        `SELECT raw_json FROM official_sections 
+         WHERE user_email = ? AND role = ? 
+         ORDER BY (CASE WHEN period='all-time' THEN 1 WHEN period='30-days' THEN 2 ELSE 3 END) ASC 
+         LIMIT 1`
+      ).get(emailKey, roleTarget);
+    } else {
+      const { data } = check(await db.client
+        .from("official_sections")
+        .select("raw_json, period")
+        .eq("user_email", emailKey)
+        .eq("role", roleTarget)
+        .limit(2));
+      if (data && data.length) {
+        officialRow = data.find(d => d.period === "all-time") || data[0];
+      }
+    }
+
+    if (officialRow && officialRow.raw_json) {
+      const perkList = typeof officialRow.raw_json === "string" ? parse(officialRow.raw_json) : officialRow.raw_json;
+      if (Array.isArray(perkList) && perkList.length > 0) {
+        return perkList.map(p => {
+          const name = p.loadout_perk_name || p.name;
+          const img = p.image?.path ? asset(p.image.path) : images.get(name);
+          const winrateVal = p.escape_rate != null ? p.escape_rate : p.kill_rate;
+          return {
+            perk: name,
+            image: img,
+            count: p.matches_played || 0,
+            pct: Math.round((p.pick_rate || 0) * 100),
+            winrate: winrateVal != null ? Math.round(winrateVal * 100) : undefined
+          };
+        }).sort((a, b) => b.count - a.count);
+      }
+    }
+  }
+
   let rows = [];
   if (db.type === "sqlite") {
     if (scope === "own-survivor") {
@@ -1406,6 +1513,74 @@ export async function perks(db, scope = "against", global = false) {
   const counts = new Map();
   rows.forEach(row => new Set(parse(row.perks_json)).forEach(perk => counts.set(perk, (counts.get(perk) ?? 0) + 1)));
   return [...counts].map(([perk, count]) => ({ perk, image: images.get(perk), count, pct: percentage(count, rows.length) })).sort((a, b) => b.count - a.count);
+}
+
+export async function characters(db, role = "all") {
+  const userEmail = db.userEmail ?? "default";
+  const images = (await catalog(db)).characters;
+  const rolesToFetch = role === "survivor" ? ["characters-survivor"] : role === "killer" ? ["characters-killer"] : ["characters-survivor", "characters-killer"];
+  let results = [];
+
+  if (db.type === "sqlite") {
+    for (const r of rolesToFetch) {
+      const row = db.db.prepare(
+        `SELECT raw_json FROM official_sections 
+         WHERE user_email = ? AND role = ? 
+         ORDER BY (CASE WHEN period='all-time' THEN 1 WHEN period='30-days' THEN 2 ELSE 3 END) ASC 
+         LIMIT 1`
+      ).get(userEmail, r);
+      if (row && row.raw_json) {
+        const list = typeof row.raw_json === "string" ? parse(row.raw_json) : row.raw_json;
+        if (Array.isArray(list)) {
+          results.push(...list.map(c => {
+            const name = c.character_name || c.character_id;
+            const img = c.image?.path ? asset(c.image.path) : images.get(name);
+            const winrateVal = c.escape_rate != null ? c.escape_rate : c.kill_rate;
+            return {
+              character: name,
+              role: r.replace("characters-", ""),
+              image: img,
+              count: c.matches_played || 0,
+              pct: Math.round((c.pick_rate || 0) * 100),
+              winrate: winrateVal != null ? Math.round(winrateVal * 100) : undefined,
+              hours: c.hours_played_in_match
+            };
+          }));
+        }
+      }
+    }
+  } else {
+    for (const r of rolesToFetch) {
+      const { data } = check(await db.client
+        .from("official_sections")
+        .select("raw_json, period")
+        .eq("user_email", userEmail)
+        .eq("role", r)
+        .limit(2));
+      const row = (data || []).find(d => d.period === "all-time") || (data || [])[0];
+      if (row && row.raw_json) {
+        const list = typeof row.raw_json === "string" ? parse(row.raw_json) : row.raw_json;
+        if (Array.isArray(list)) {
+          results.push(...list.map(c => {
+            const name = c.character_name || c.character_id;
+            const img = c.image?.path ? asset(c.image.path) : images.get(name);
+            const winrateVal = c.escape_rate != null ? c.escape_rate : c.kill_rate;
+            return {
+              character: name,
+              role: r.replace("characters-", ""),
+              image: img,
+              count: c.matches_played || 0,
+              pct: Math.round((c.pick_rate || 0) * 100),
+              winrate: winrateVal != null ? Math.round(winrateVal * 100) : undefined,
+              hours: c.hours_played_in_match
+            };
+          }));
+        }
+      }
+    }
+  }
+
+  return results.sort((a, b) => b.count - a.count);
 }
 
 export async function trends(db) {
