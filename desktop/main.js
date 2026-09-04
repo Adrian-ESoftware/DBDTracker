@@ -14,7 +14,7 @@ import { app, BrowserWindow, globalShortcut, ipcMain, dialog, Tray, Menu, native
 import { openDatabase } from "./database.js";
 import { startServer } from "./server.js";
 import { createBackgroundCollector } from "./background-collector.js";
-import { createCommunityAuth, ensureAnonymousCommunitySession, linkRecoveryEmail, uploadCommunitySubmission } from "./community.js";
+import { createCommunityAuth, ensureAnonymousCommunitySession, linkRecoveryEmailDirect, uploadCommunitySubmission } from "./community.js";
 
 function loadCommunityConfig() {
   try {
@@ -716,6 +716,46 @@ ipcMain.handle("community-status", async () => {
   }
   return communityState;
 });
+ipcMain.handle("community-stats", async () => {
+  if (!communityAuth) throw new Error("Community Supabase is not configured");
+  const [charactersRes, mapsRes, killersRes, perksRes] = await Promise.all([
+    communityAuth.from("public_character_stats").select("role, character_id, match_count"),
+    communityAuth.from("public_map_stats").select("role, map_id, match_count"),
+    communityAuth.from("public_killer_stats").select("killer_id, match_count, average_kills"),
+    communityAuth.from("public_perk_stats").select("role, perk_id, usage_count")
+  ]);
+  for (const result of [charactersRes, mapsRes, killersRes, perksRes]) {
+    if (result.error) throw result.error;
+  }
+  const aggregate = (rows, key, countKey = "match_count") => {
+    const groups = new Map();
+    for (const row of rows || []) {
+      const value = row[key];
+      if (!value) continue;
+      groups.set(value, (groups.get(value) || 0) + Number(row[countKey] || 0));
+    }
+    const total = [...groups.values()].reduce((sum, value) => sum + value, 0);
+    return [...groups].map(([value, count]) => ({ value, count, pct: total ? Math.round(count * 1000 / total) / 10 : 0 }))
+      .sort((a, b) => b.count - a.count);
+  };
+  const characterRows = charactersRes.data || [];
+  const mapRows = mapsRes.data || [];
+  const perkRows = perksRes.data || [];
+  return {
+    characters: {
+      survivor: aggregate(characterRows.filter(row => row.role === "survivor"), "character_id"),
+      killer: aggregate(characterRows.filter(row => row.role === "killer"), "character_id")
+    },
+    maps: aggregate(mapRows, "map_id"),
+    killers: (killersRes.data || []).filter(row => row.killer_id).map(row => ({
+      killer: row.killer_id, count: Number(row.match_count || 0), average_kills: row.average_kills
+    })).sort((a, b) => b.count - a.count),
+    perks: {
+      survivor: aggregate(perkRows.filter(row => row.role === "survivor"), "perk_id", "usage_count"),
+      killer: aggregate(perkRows.filter(row => row.role === "killer"), "perk_id", "usage_count")
+    }
+  };
+});
 ipcMain.handle("set-community-opt-in", async (_, enabled) => {
   if (enabled) {
     if (!communityAuth) throw new Error("Community Supabase is not configured");
@@ -740,9 +780,14 @@ ipcMain.handle("link-community-email", async (_, email) => {
   if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
   try {
     await ensureAnonymousCommunitySession(communityAuth);
-    const user = await linkRecoveryEmail(communityAuth, requestedEmail);
-    communityState.email = user?.email ?? requestedEmail;
-    communityState.emailConfirmed = !!user?.email_confirmed_at;
+    const session = await communityAuth.auth.getSession();
+    const linked = await linkRecoveryEmailDirect({
+      apiUrl: communityConfig.apiUrl,
+      accessToken: session.data.session?.access_token,
+      email: requestedEmail
+    });
+    communityState.email = linked.email ?? requestedEmail;
+    communityState.emailConfirmed = !!linked.email_confirmed;
     userConfig.communityPendingEmail = communityState.email;
     saveUserConfig();
     communityState.message = "E-mail vinculado. Verifique sua caixa de entrada para confirmar a recuperação.";

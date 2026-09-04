@@ -272,7 +272,7 @@ h2:first-child{margin-top:2px}
         <div class="card"><span>Winrate Killer</span><strong id="fourk">0%</strong></div>
         <div class="card"><span>Score medio</span><strong id="score">0</strong></div>
       </div>
-      <h2>Regular Trials / Global</h2>
+      <h2>Overview Global</h2>
       <div class="sections">
         <div class="card"><h3>Geral</h3><div id="globalStats"></div></div>
         <div class="card"><h3>Survivor</h3><div id="globalSurvivorStats"></div></div>
@@ -316,7 +316,7 @@ h2:first-child{margin-top:2px}
           <button id="btn-trends-global" style="font-size:10px; font-weight:700; padding:2px 8px;">Comunidade</button>
         </div>
       </div>
-      <h2>Personagens Mais Jogados (Oficial)</h2>
+      <h2 id="characters-ranking-title">Personagens Mais Jogados (Oficial)</h2>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
         <div>
           <div style="font-size:9px;font-weight:700;color:var(--red);text-transform:uppercase;margin-bottom:6px;letter-spacing:.08em">Survivors</div>
@@ -328,7 +328,7 @@ h2:first-child{margin-top:2px}
         </div>
       </div>
 
-      <h2>Perks do Usuário</h2>
+      <h2 id="perks-user-title">Perks do Usuário</h2>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
         <div>
           <div style="font-size:9px;font-weight:700;color:var(--red);text-transform:uppercase;margin-bottom:6px;letter-spacing:.08em">Survivor</div>
@@ -340,7 +340,7 @@ h2:first-child{margin-top:2px}
         </div>
       </div>
 
-      <h2>Perks dos Outros Jogadores</h2>
+      <h2 id="perks-others-title">Perks dos Outros Jogadores</h2>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
         <div>
           <div style="font-size:9px;font-weight:700;color:var(--red);text-transform:uppercase;margin-bottom:6px;letter-spacing:.08em">Survivor</div>
@@ -928,6 +928,7 @@ var trendsGlobal = false;
 async function load() {
   try {
     var trendsQuerySuffix = trendsGlobal ? '?global=true' : '';
+    var communityPromise = trendsGlobal ? window.dbd.communityStats() : Promise.resolve(null);
     var results = await Promise.all([
       get('/stats/overview'),
       get('/stats/killers' + trendsQuerySuffix),
@@ -941,9 +942,29 @@ async function load() {
       get('/top-characters'),
       get('/assets'),
       get('/stats/characters?role=survivor'),
-      get('/stats/characters?role=killer')
+      get('/stats/characters?role=killer'),
+      communityPromise
     ]);
-    var o=results[0], k=results[1], m=results[2], recent=results[3], sections=results[4], pOwnSurv=results[5], pOwnKiller=results[6], pOthersSurv=results[7], pOthersKiller=results[8], top=results[9], allAssets=results[10], cOwnSurv=results[11], cOwnKiller=results[12];
+    var o=results[0], k=results[1], m=results[2], recent=results[3], sections=results[4], pOwnSurv=results[5], pOwnKiller=results[6], pOthersSurv=results[7], pOthersKiller=results[8], top=results[9], allAssets=results[10], cOwnSurv=results[11], cOwnKiller=results[12], community=results[13];
+    if (trendsGlobal && community) {
+      $('characters-ranking-title').textContent = 'Personagens Mais Jogados (Comunidade)';
+      $('perks-user-title').textContent = 'Perks Mais Usadas (Comunidade)';
+      $('perks-others-title').textContent = 'Perks Mais Usadas (Comunidade)';
+      cOwnSurv = community.characters.survivor.map(function(x) { return { character: x.value, count: x.count, pct: x.pct }; });
+      cOwnKiller = community.characters.killer.map(function(x) { return { character: x.value, count: x.count, pct: x.pct }; });
+      k = community.killers.map(function(x) { return { killer: x.killer, count: x.count, pct: 0 }; });
+      var killerTotal = k.reduce(function(sum, x) { return sum + x.count; }, 0);
+      k.forEach(function(x) { x.pct = killerTotal ? Math.round(x.count * 1000 / killerTotal) / 10 : 0; });
+      m = community.maps.map(function(x) { return { map: x.value, count: x.count, pct: x.pct }; });
+      pOthersSurv = community.perks.survivor.map(function(x) { return { perk: x.value, count: x.count, pct: x.pct }; });
+      pOthersKiller = community.perks.killer.map(function(x) { return { perk: x.value, count: x.count, pct: x.pct }; });
+      pOwnSurv = pOthersSurv;
+      pOwnKiller = pOthersKiller;
+    } else {
+      $('characters-ranking-title').textContent = 'Personagens Mais Jogados (Oficial)';
+      $('perks-user-title').textContent = 'Perks do Usuário';
+      $('perks-others-title').textContent = 'Perks dos Outros Jogadores';
+    }
 
     // Build all image maps
     perkImages = {};
@@ -962,6 +983,11 @@ async function load() {
     var catalogPerks = (allAssets && allAssets.perks) || {};
     for (var pName in catalogPerks) {
       if (!perkImages[pName]) perkImages[pName] = catalogPerks[pName];
+    }
+    if (trendsGlobal && community) {
+      k.forEach(function(x) { x.image = (allAssets.characters || {})[x.killer]; });
+      m.forEach(function(x) { x.image = mapImages[x.map]; });
+      pOthersSurv.concat(pOthersKiller).forEach(function(x) { x.image = perkImages[x.perk]; });
     }
 
     // Page 1

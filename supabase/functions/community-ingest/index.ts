@@ -37,6 +37,20 @@ Deno.serve(async request => {
 
   let submission: any;
   try { submission = await request.json(); } catch { return json({ error: "invalid_json" }, 400); }
+  const adminClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("DBD_SERVICE_ROLE_KEY")!);
+  if (submission?.action === "link_email") {
+    const email = typeof submission.email === "string" ? submission.email.trim().slice(0, 320) : "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "invalid_email" }, 400);
+    const { data, error } = await adminClient.auth.admin.updateUserById(user.id, {
+      email,
+      email_confirm: true
+    });
+    if (error) {
+      console.error("community email link failed", error);
+      return json({ error: "email_link_failed" }, 400);
+    }
+    return json({ linked: true, email: data.user.email, email_confirmed: !!data.user.email_confirmed_at });
+  }
   const matches = submission?.payload?.matches;
   if (!Array.isArray(matches) || matches.length < 1 || matches.length > 100 || !submission.payload_hash) {
     return json({ error: "invalid_submission" }, 400);
@@ -70,7 +84,6 @@ Deno.serve(async request => {
     return json({ error: "invalid_match" }, 400);
   }
 
-  const adminClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("DBD_SERVICE_ROLE_KEY")!);
   const { error } = await adminClient.from("community_submissions").upsert({
     owner_id: user.id,
     payload_hash: submission.payload_hash,

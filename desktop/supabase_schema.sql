@@ -122,45 +122,46 @@ returns void language sql security definer set search_path = public as $$
   insert into public.public_character_stats (patch_version, role, character_id, match_count, escapes, kills, average_score)
   select patch_version, role, coalesce(nullif(character_id,''),''), sum(match_count), sum(escapes), sum(kills),
     round(sum(total_score)::numeric / nullif(sum(match_count),0))
-  from public.community_daily_stats group by patch_version, role, character_id having sum(match_count) >= 20;
+  from public.community_daily_stats group by patch_version, role, character_id;
   insert into public.public_map_stats (patch_version, role, map_id, match_count, escapes, kills)
   select patch_version, role, coalesce(nullif(map_id,''),''), sum(match_count), sum(escapes), sum(kills)
-  from public.community_daily_stats group by patch_version, role, map_id having sum(match_count) >= 20;
+  from public.community_daily_stats group by patch_version, role, map_id;
   insert into public.public_killer_stats (patch_version, killer_id, match_count, kills, average_kills)
   select coalesce(patch_version, 'unknown'), killer_id, count(*), sum(coalesce(kills_count, 0)),
     round(sum(coalesce(kills_count, 0))::numeric / nullif(count(*), 0), 2)
   from public.community_matches where killer_id is not null and killer_id <> ''
-  group by coalesce(patch_version, 'unknown'), killer_id having count(*) >= 20;
+  group by coalesce(patch_version, 'unknown'), killer_id;
   insert into public.public_perk_stats (patch_version, role, perk_id, usage_count)
   select coalesce(m.patch_version, 'unknown'), m.role, perk_id, count(*)
   from public.community_matches m join public.community_match_loadouts l on l.match_id = m.id
   cross join lateral jsonb_array_elements_text(l.perks) as perk_id
-  group by coalesce(m.patch_version, 'unknown'), m.role, perk_id having count(*) >= 20;
+  group by coalesce(m.patch_version, 'unknown'), m.role, perk_id;
   insert into public.public_perk_stats (patch_version, role, perk_id, usage_count)
   select coalesce(m.patch_version, 'unknown'), 'killer', perk_id, count(*)
   from public.community_matches m join public.community_match_loadouts l on l.match_id = m.id
   cross join lateral jsonb_array_elements_text(l.killer_perks) as perk_id
   where jsonb_array_length(l.killer_perks) > 0
-  group by coalesce(m.patch_version, 'unknown'), perk_id having count(*) >= 20;
+  group by coalesce(m.patch_version, 'unknown'), perk_id;
   insert into public.public_build_stats (patch_version, role, build_id, usage_count)
   select coalesce(m.patch_version, 'unknown'), m.role,
     array_to_string(array(select jsonb_array_elements_text(l.perks) order by 1), ' + '), count(*)
   from public.community_matches m join public.community_match_loadouts l on l.match_id = m.id
   where jsonb_array_length(l.perks) = 4
-  group by coalesce(m.patch_version, 'unknown'), m.role, l.perks having count(*) >= 20;
+  group by coalesce(m.patch_version, 'unknown'), m.role,
+    array_to_string(array(select jsonb_array_elements_text(l.perks) order by 1), ' + ');
   insert into public.public_perk_pair_stats (patch_version, role, perk_a, perk_b, usage_count)
   select coalesce(m.patch_version, 'unknown'), m.role, least(a.perk, b.perk), greatest(a.perk, b.perk), count(*)
   from public.community_matches m join public.community_match_loadouts l on l.match_id = m.id
   cross join lateral jsonb_array_elements_text(l.perks) a(perk)
   cross join lateral jsonb_array_elements_text(l.perks) b(perk)
   where a.perk < b.perk
-  group by coalesce(m.patch_version, 'unknown'), m.role, least(a.perk, b.perk), greatest(a.perk, b.perk) having count(*) >= 20;
+  group by coalesce(m.patch_version, 'unknown'), m.role, least(a.perk, b.perk), greatest(a.perk, b.perk);
   insert into public.public_killer_map_stats (patch_version, killer_id, map_id, match_count, kills, average_kills)
   select coalesce(m.patch_version, 'unknown'), m.killer_id, m.map_id, count(*), sum(coalesce(m.kills_count, 0)),
     round(sum(coalesce(m.kills_count, 0))::numeric / nullif(count(*), 0), 2)
   from public.community_matches m
   where m.killer_id is not null and m.killer_id <> '' and m.map_id is not null and m.map_id <> ''
-  group by coalesce(m.patch_version, 'unknown'), m.killer_id, m.map_id having count(*) >= 20;
+  group by coalesce(m.patch_version, 'unknown'), m.killer_id, m.map_id;
 $$;
 revoke all on function public.refresh_community_daily_stats() from public, anon, authenticated;
 grant execute on function public.refresh_community_daily_stats() to service_role;
@@ -209,3 +210,6 @@ grant select on public.public_killer_stats, public.public_perk_stats, public.pub
 grant all on public.public_character_stats, public.public_map_stats, public.public_killer_stats,
   public.public_perk_stats, public.public_build_stats, public.public_perk_pair_stats,
   public.public_killer_map_stats to service_role;
+
+-- Recalcula os agregados imediatamente ao aplicar o schema.
+select public.refresh_community_daily_stats();

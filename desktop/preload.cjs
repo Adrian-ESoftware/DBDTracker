@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("dbd", {
   clearLogin: () => ipcRenderer.invoke("clear-login"),
   collectorStatus: () => ipcRenderer.invoke("collector-status"),
   communityStatus: () => ipcRenderer.invoke("community-status"),
+  communityStats: () => ipcRenderer.invoke("community-stats"),
   onCommunityStatus: callback => ipcRenderer.on("community-status", (_, value) => callback(value)),
   setCommunityOptIn: enabled => ipcRenderer.invoke("set-community-opt-in", !!enabled),
   linkCommunityEmail: email => ipcRenderer.invoke("link-community-email", email),

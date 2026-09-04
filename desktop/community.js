@@ -48,6 +48,19 @@ export async function linkRecoveryEmail(client, email) {
   return data.user;
 }
 
+export async function linkRecoveryEmailDirect({ apiUrl, accessToken, email, fetchImpl = fetch }) {
+  if (!apiUrl || !accessToken || !email) throw new Error("community API, access token and email are required");
+  const response = await fetchImpl(apiUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "link_email", email })
+  });
+  let body = {};
+  try { body = await response.json(); } catch {}
+  if (!response.ok) throw new Error(`Falha ao vincular e-mail: ${body.error || response.status}`);
+  return body;
+}
+
 export function sanitizeCommunityMatches(matches, metadata = {}) {
   if (!Array.isArray(matches)) throw new TypeError("matches must be an array");
   if (matches.length < 1 || matches.length > MAX_MATCHES_PER_UPLOAD) {
