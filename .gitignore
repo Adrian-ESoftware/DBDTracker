@@ -13,9 +13,32 @@ build/
 out/
 bin/
 obj/
+release/
+desktop/release/
+desktop/.webpack/
+desktop/.vite/
 *.exe
 *.msi
 *.zip
+*.AppImage
+*.deb
+*.rpm
+*.dmg
+
+# Local application state and databases
+desktop/config.json
+desktop/community-session.json
+desktop/*.sqlite
+desktop/*.sqlite3
+desktop/*.sqlite-*
+desktop/*.db
+*.sqlite-wal
+*.sqlite-shm
+
+# Supabase local state and generated files
+supabase/.temp/
+supabase/.branches/
+supabase/.cache/
 
 # Logs
 logs/
@@ -56,6 +79,9 @@ build/Release
 
 # Local env files
 .env
+.env.*
+!.env.example
+!desktop/.env.example
 .env.local
 .env.development.local
 .env.test.local
