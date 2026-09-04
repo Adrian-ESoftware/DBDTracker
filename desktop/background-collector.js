@@ -382,10 +382,11 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
       }
     });
 
-    browser.on("close", event => {
-      if (!browser.forceClose) {
+    const loginWindow = browser;
+    loginWindow.on("close", event => {
+      if (!loginWindow.forceClose) {
         event.preventDefault();
-        browser.hide();
+        loginWindow.hide();
         stopLoginWatcher();
       }
     });
@@ -474,10 +475,10 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
       ]);
       await new Promise(r => setTimeout(r, 2000));
       const token = await checkAndExtractAuth(hiddenWin);
-      if (!browser?.isVisible()) {
-        browser.forceClose = true;
-        browser.close();
-        browser = null;
+      if (!hiddenWin.isDestroyed() && !hiddenWin.isVisible()) {
+        hiddenWin.forceClose = true;
+        hiddenWin.close();
+        if (browser === hiddenWin) browser = null;
       }
       return token;
     } catch {
