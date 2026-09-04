@@ -16,6 +16,25 @@ import { startServer } from "./server.js";
 import { createBackgroundCollector } from "./background-collector.js";
 import { createCommunityAuth, ensureAnonymousCommunitySession, linkRecoveryEmail, uploadCommunitySubmission } from "./community.js";
 
+function loadCommunityConfig() {
+  try {
+    const file = JSON.parse(readFileSync(join(import.meta.dirname, "community-config.json"), "utf8"));
+    return {
+      apiUrl: process.env.COMMUNITY_API_URL || file.apiUrl,
+      supabaseUrl: process.env.COMMUNITY_SUPABASE_URL || file.supabaseUrl,
+      publishableKey: process.env.COMMUNITY_SUPABASE_PUBLISHABLE_KEY || file.publishableKey
+    };
+  } catch {
+    return {
+      apiUrl: process.env.COMMUNITY_API_URL,
+      supabaseUrl: process.env.COMMUNITY_SUPABASE_URL,
+      publishableKey: process.env.COMMUNITY_SUPABASE_PUBLISHABLE_KEY
+    };
+  }
+}
+
+const communityConfig = loadCommunityConfig();
+
 // ── Otimizações de memória e plataforma ──
 if (process.platform === "win32") {
   app.disableHardwareAcceleration();
@@ -593,8 +612,9 @@ app.whenReady().then(() => {
   loadUserConfig();
 
   communityAuth = createCommunityAuth({
-    url: process.env.COMMUNITY_SUPABASE_URL,
-    publishableKey: process.env.COMMUNITY_SUPABASE_PUBLISHABLE_KEY,
+    url: communityConfig.supabaseUrl,
+    publishableKey: communityConfig.publishableKey && !communityConfig.publishableKey.startsWith("COLE_AQUI")
+      ? communityConfig.publishableKey : null,
     storage: createCommunityStorage()
   });
   communityState.configured = !!communityAuth;
@@ -642,7 +662,7 @@ app.whenReady().then(() => {
         communityState.message = "Enviando dados anônimos...";
         const session = await ensureAnonymousCommunitySession(communityAuth);
         await uploadCommunitySubmission({
-          apiUrl: process.env.COMMUNITY_API_URL,
+          apiUrl: communityConfig.apiUrl,
           accessToken: session.access_token,
           matches: newMatches
         });
