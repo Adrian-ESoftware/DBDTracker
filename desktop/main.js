@@ -14,6 +14,7 @@ import { app, BrowserWindow, globalShortcut, ipcMain, dialog, Tray, Menu, native
 import { openDatabase } from "./database.js";
 import { startServer } from "./server.js";
 import { createBackgroundCollector } from "./background-collector.js";
+import { createCommunityAuth, ensureAnonymousCommunitySession, linkRecoveryEmail, uploadCommunitySubmission } from "./community.js";
 
 // ── Otimizações de memória e plataforma ──
 if (process.platform === "win32") {
@@ -39,6 +40,10 @@ app.commandLine.appendSwitch("disable-default-apps");
 app.commandLine.appendSwitch("no-first-run");
 app.commandLine.appendSwitch("disable-breakpad");
 app.commandLine.appendSwitch("disable-domain-reliability");
+try {
+  app.commandLine.appendSwitch("disk-cache-dir", join(app.getPath("userData"), "cache"));
+  app.commandLine.appendSwitch("gpu-disk-cache-dir", join(app.getPath("userData"), "gpu-cache"));
+} catch {}
 
 // Garante instancia unica: se ja existe uma rodando, foca ela e encerra esta
 const gotLock = app.requestSingleInstanceLock();
@@ -46,9 +51,6 @@ if (!gotLock) {
   app.quit();
   process.exit(0);
 }
-
-// Desativa animações nativas de janela do Windows para evitar piscadas na transição show/hide
-app.commandLine.appendSwitch("wm-window-animations-disabled");
 
 // Quando uma segunda instancia tenta abrir, foca a janela existente
 app.on("second-instance", () => {
@@ -92,6 +94,8 @@ let mapCheckProcess = null;
 let mapCheckBuffer = "";
 let mapCheckStatus = { status: "initializing", monitor: null };
 let mapOverlayWindow = null;
+let communityAuth = null;
+let communityState = { configured: false, enabled: false, syncing: false, email: null, pendingEmail: null, officialEmail: null, emailConfirmed: false, message: "Contribuição desativada." };
 const mapOverlaysPath = join(import.meta.dirname, "map_overlays");
 const mapCatalogPath = join(import.meta.dirname, "dbd-map-catalog.json");
 let userConfig = {
@@ -107,6 +111,27 @@ let userConfig = {
   startWithSystem: false,
   startMinimized: false
 };
+
+function createCommunityStorage() {
+  const sessionPath = join(app.getPath("userData"), "community-session.json");
+  return {
+    getItem(key) {
+      try { return JSON.parse(readFileSync(sessionPath, "utf8"))[key] ?? null; } catch { return null; }
+    },
+    setItem(key, value) {
+      let values = {};
+      try { values = JSON.parse(readFileSync(sessionPath, "utf8")); } catch {}
+      values[key] = value;
+      writeFileSync(sessionPath, JSON.stringify(values), "utf8");
+    },
+    removeItem(key) {
+      let values = {};
+      try { values = JSON.parse(readFileSync(sessionPath, "utf8")); } catch {}
+      delete values[key];
+      writeFileSync(sessionPath, JSON.stringify(values), "utf8");
+    }
+  };
+}
 
 function loadUserConfig() {
   try {
@@ -519,8 +544,25 @@ function createMapOverlayWindow(mapName) {
   });
 }
 
+function setOverlayWindowOpacity() {
+  if (!mapOverlayWindow || mapOverlayWindow.isDestroyed()) return;
+  const userOpacity = (userConfig.overlayOpacity || 70) / 100;
+  mapOverlayWindow.webContents.executeJavaScript(`
+    (() => {
+      const img = document.querySelector('img');
+      if (img) img.style.opacity = '${userOpacity}';
+    })()
+  `).catch(() => {});
+}
+
 function positionOverlayWindow() {
   if (!mapOverlayWindow || mapOverlayWindow.isDestroyed()) return;
+
+  const targetSize = userConfig.overlaySize || 350;
+  const [currentW, currentH] = mapOverlayWindow.getSize();
+  if (currentW !== targetSize || currentH !== targetSize) {
+    mapOverlayWindow.setSize(targetSize, targetSize);
+  }
 
   const display = screen.getPrimaryDisplay();
   const { x, y, width: scrWidth, height: scrHeight } = display.workArea;
@@ -548,18 +590,37 @@ function positionOverlayWindow() {
 }
 
 app.whenReady().then(() => {
-  // Redireciona caches do Chromium para o userData (seguro chamar apos ready)
-  app.commandLine.appendSwitch("disk-cache-dir", join(app.getPath("userData"), "cache"));
-  app.commandLine.appendSwitch("gpu-disk-cache-dir", join(app.getPath("userData"), "gpu-cache"));
-
   loadUserConfig();
 
+  communityAuth = createCommunityAuth({
+    url: process.env.COMMUNITY_SUPABASE_URL,
+    publishableKey: process.env.COMMUNITY_SUPABASE_PUBLISHABLE_KEY,
+    storage: createCommunityStorage()
+  });
+  communityState.configured = !!communityAuth;
+  communityState.enabled = !!userConfig.communityOptIn;
+  communityState.officialEmail = userConfig.userEmail || null;
+  communityState.pendingEmail = userConfig.communityPendingEmail || null;
+  if (communityAuth) {
+    communityAuth.auth.onAuthStateChange((_event, session) => {
+      const user = session?.user;
+      communityState.email = user?.email ?? communityState.pendingEmail ?? null;
+      communityState.emailConfirmed = !!user?.email_confirmed_at;
+      if (user?.email && user.email === communityState.pendingEmail) {
+        communityState.pendingEmail = null;
+        userConfig.communityPendingEmail = null;
+        saveUserConfig();
+      }
+      if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+    });
+  }
+
   const db = openDatabase(join(app.getPath("userData"), "dbd_tracker.sqlite3"));
-  console.log(`[Main] Banco de dados: ${db.type} | SUPABASE_URL: ${process.env.SUPABASE_URL ? "configurado" : "NÃO ENCONTRADO"}`);
+  console.log(`[Main] Banco de dados local: ${db.type}. O banco comunitário é acessado exclusivamente pela API segura.`);
 
   if (userConfig.userEmail) {
     db.userEmail = userConfig.userEmail;
-    console.log(`[Main] Inicializando banco de dados com e-mail: ${db.userEmail}`);
+    console.log("[Main] Identidade oficial carregada para uso local; ela não é enviada ao banco comunitário.");
   }
 
   // Mostra a janela o mais rápido possível
@@ -573,6 +634,26 @@ app.whenReady().then(() => {
     collector = createBackgroundCollector(db, state => {
       if (window && !window.isDestroyed()) {
         window.webContents.send("collector-status", state);
+      }
+    }, async newMatches => {
+      if (!userConfig.communityOptIn || !communityAuth) return;
+      try {
+        communityState.syncing = true;
+        communityState.message = "Enviando dados anônimos...";
+        const session = await ensureAnonymousCommunitySession(communityAuth);
+        await uploadCommunitySubmission({
+          apiUrl: process.env.COMMUNITY_API_URL,
+          accessToken: session.access_token,
+          matches: newMatches
+        });
+        communityState.message = `${newMatches.length} partida(s) sincronizada(s).`;
+      } catch (error) {
+        communityState.message = error.message.startsWith("Falha na sincronização")
+          ? error.message
+          : `Falha na sincronização: ${error.message}`;
+      } finally {
+        communityState.syncing = false;
+        if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
       }
     });
     // Inicia o coletor 2s após a janela aparecer para não travar a UI
@@ -604,6 +685,55 @@ ipcMain.handle("finish-login", () => collector?.finishLogin());
 ipcMain.handle("collect-now", () => collector?.collect());
 ipcMain.handle("clear-login", () => collector?.clearLogin());
 ipcMain.handle("collector-status", () => collector ? collector.getState() : { message: "Iniciando coletor...", loggedIn: false, collecting: false });
+ipcMain.handle("community-status", async () => {
+  loadUserConfig();
+  communityState.officialEmail = userConfig.userEmail || null;
+  if (communityAuth) {
+    const { data } = await communityAuth.auth.getSession();
+    const user = data.session?.user;
+    communityState.email = user?.email ?? communityState.pendingEmail ?? null;
+    communityState.emailConfirmed = !!user?.email_confirmed_at;
+  }
+  return communityState;
+});
+ipcMain.handle("set-community-opt-in", async (_, enabled) => {
+  if (enabled) {
+    if (!communityAuth) throw new Error("Community Supabase is not configured");
+    await ensureAnonymousCommunitySession(communityAuth);
+  }
+  userConfig.communityOptIn = !!enabled;
+  communityState.enabled = !!enabled;
+  communityState.message = enabled ? "Contribuição anônima ativada." : "Contribuição desativada.";
+  saveUserConfig();
+  return communityState;
+});
+ipcMain.handle("link-community-email", async (_, email) => {
+  if (!communityAuth) throw new Error("Community Supabase is not configured");
+  const requestedEmail = String(email || "").trim();
+  if (!requestedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(requestedEmail)) {
+    throw new Error("Informe um e-mail válido.");
+  }
+  communityState.pendingEmail = requestedEmail;
+  communityState.email = requestedEmail;
+  communityState.emailConfirmed = false;
+  communityState.message = "Enviando confirmação para o e-mail informado...";
+  if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+  try {
+    await ensureAnonymousCommunitySession(communityAuth);
+    const user = await linkRecoveryEmail(communityAuth, requestedEmail);
+    communityState.email = user?.email ?? requestedEmail;
+    communityState.emailConfirmed = !!user?.email_confirmed_at;
+    userConfig.communityPendingEmail = communityState.email;
+    saveUserConfig();
+    communityState.message = "E-mail vinculado. Verifique sua caixa de entrada para confirmar a recuperação.";
+    return communityState;
+  } catch (error) {
+    communityState.pendingEmail = null;
+    communityState.email = null;
+    communityState.message = `Não foi possível vincular o e-mail: ${error.message}`;
+    throw error;
+  }
+});
 ipcMain.handle("show-map-preview", () => {
   createMapOverlayWindow("DVARKA DEEPWOOD - TOBA LANDING");
   return true;

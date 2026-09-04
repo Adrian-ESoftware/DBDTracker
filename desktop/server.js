@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, normalize } from "node:path";
 import { ingestMatches, ingestOfficialMetrics, ingestOfficialSections, ingestSnapshots, ingestTopCharacter, killers, maps, matches, officialMetrics, officialSections, overview, perks, topCharacters, trends, assetImages, characters } from "./database.js";
 
 const allowedOrigin = origin => !origin || origin.startsWith("https://stats.deadbydaylight.com");
@@ -28,8 +28,16 @@ export function startServer(db, port = 8765, mapOverlaysPath = "") {
     try {
       const url = new URL(request.url, `http://${request.headers.host}`);
       if (url.pathname.startsWith("/api/map-overlays/")) {
-        const filename = decodeURIComponent(url.pathname.substring("/api/map-overlays/".length));
-        const filePath = join(mapOverlaysPath, filename);
+        if (!mapOverlaysPath) return reply(response, 404, { detail: "Map overlays not configured" }, origin);
+        const rawFilename = decodeURIComponent(url.pathname.substring("/api/map-overlays/".length));
+        if (rawFilename.includes("..") || rawFilename.includes("/") || rawFilename.includes("\\")) {
+          return reply(response, 403, { detail: "Access denied" }, origin);
+        }
+        const safeBase = resolve(mapOverlaysPath);
+        const filePath = resolve(safeBase, rawFilename);
+        if (!filePath.startsWith(safeBase)) {
+          return reply(response, 403, { detail: "Access denied" }, origin);
+        }
         if (existsSync(filePath)) {
           try {
             const data = readFileSync(filePath);

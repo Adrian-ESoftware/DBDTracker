@@ -3,12 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' http://127.0.0.1:* https://assets.live.bhvraccount.com; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http://127.0.0.1:* https://assets.live.bhvraccount.com;">
 <title>DBD Tracker Overlay</title>
 <style>
-:root{--bg:#090b10f2;--panel:#151a22;--line:#2a313c;--muted:#929dab;--red:#ec3c3c;--green:#50d28f;--text:#f4f5f7;--tab-h:38px}
+:root{--bg:#090b10f2;--panel:#151a22;--line:#2a313c;--muted:#929dab;--red:#ec3c3c;--green:#50d28f;--text:#f4f5f7;--accent-soft:#ec3c3c55;--tab-h:38px}
+:root[data-theme="ocean"]{--bg:#071018f2;--panel:#10202b;--line:#254252;--muted:#89a9b8;--red:#35b9e8;--green:#55d6a0;--text:#edfaff;--accent-soft:#35b9e855}
+:root[data-theme="forest"]{--bg:#09120ef2;--panel:#13231b;--line:#2b4938;--muted:#94ae9d;--red:#67d38c;--green:#b1e56e;--text:#effff3;--accent-soft:#67d38c55}
+:root[data-theme="amber"]{--bg:#151009f2;--panel:#282016;--line:#55412a;--muted:#b7a184;--red:#f0a33a;--green:#a9d66b;--text:#fff8e9;--accent-soft:#f0a33a55}
 *{box-sizing:border-box}
 body{margin:0;color:var(--text);font:13px Inter,Segoe UI,sans-serif;background:transparent;user-select:none}
-.app{height:100vh;background:radial-gradient(circle at 80% -10%,#54191c88,transparent 32%),var(--bg);border:1px solid #343d49;border-radius:12px;overflow:hidden;box-shadow:0 20px 55px #000a;display:flex;flex-direction:column}
+.app{height:100vh;background:radial-gradient(circle at 80% -10%,var(--accent-soft),transparent 32%),var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 20px 55px #000a;display:flex;flex-direction:column}
 
 /* Titlebar */
 .titlebar{-webkit-app-region:drag;height:45px;flex-shrink:0;display:flex;align-items:center;padding:0 12px;border-bottom:1px solid var(--line);font-weight:850;letter-spacing:.1em}
@@ -38,7 +42,7 @@ button:hover{background:#2b333f}
 .kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .sections{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .details{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.card{position:relative;background:linear-gradient(145deg,#171d25,#11151b);border:1px solid var(--line);border-radius:8px;padding:11px;overflow:hidden}
+.card{position:relative;background:linear-gradient(145deg,var(--panel),var(--bg));border:1px solid var(--line);border-radius:8px;padding:11px;overflow:hidden}
 .card span{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}
 .card strong{display:block;font-size:22px;margin-top:5px}
 .card h3{position:relative;z-index:1;font-size:9px;color:var(--red);text-transform:uppercase;margin:0 0 6px}
@@ -52,6 +56,8 @@ h2:first-child{margin-top:2px}
 
 /* Bars */
 .bars{display:grid;gap:8px}
+.bars-toggle{margin-top:7px;width:100%;font-size:9px;color:var(--muted);background:transparent;border-color:var(--line)}
+.bars-toggle:hover{color:var(--text);border-color:var(--red)}
 .bar-top{display:flex;justify-content:space-between;align-items:center}
 .bar small{color:var(--muted)}
 .bar-name{display:flex;align-items:center;gap:7px}
@@ -60,9 +66,9 @@ h2:first-child{margin-top:2px}
 .fill{height:100%;background:var(--red);border-radius:4px}
 
 /* Match cards */
-.match{display:grid;grid-template-columns:44px 1fr auto;gap:3px 8px;align-items:center;background:linear-gradient(90deg,#141920,#10141a);border:1px solid var(--line);padding:8px;border-radius:7px;margin-bottom:6px;cursor:pointer;transition:border-color .15s,background .15s}
+.match{display:grid;grid-template-columns:44px 1fr auto;gap:3px 8px;align-items:center;background:linear-gradient(90deg,var(--panel),var(--bg));border:1px solid var(--line);padding:8px;border-radius:7px;margin-bottom:6px;cursor:pointer;transition:border-color .15s,background .15s}
 .match:hover{border-color:#3d4d5f;background:linear-gradient(90deg,#18202a,#131820)}
-.match.open{border-color:#ec3c3c55;background:linear-gradient(90deg,#1a1215,#110e14)}
+.match.open{border-color:var(--accent-soft);background:linear-gradient(90deg,var(--panel),var(--bg))}
 .match-char-img{width:40px;height:40px;object-fit:contain;grid-row:span 2;border-radius:4px}
 .match-char-blank{width:40px;height:40px;background:#0c0f14;border-radius:4px;grid-row:span 2}
 .match small{color:var(--muted)}
@@ -82,7 +88,7 @@ h2:first-child{margin-top:2px}
 @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .detail-full{grid-column:1/-1}
-.detail-section{background:#0d1017;border:1px solid var(--line);border-radius:6px;padding:8px}
+.detail-section{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px}
 .detail-section h4{font-size:9px;color:var(--red);text-transform:uppercase;letter-spacing:.08em;margin:0 0 6px}
 .detail-row{display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid #1a2030;font-size:10px}
 .detail-row:last-child{border-bottom:none}
@@ -109,6 +115,10 @@ h2:first-child{margin-top:2px}
 .footer button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:11px;padding:7px 10px;transition:all .15s ease}
 .footer button svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .state{padding:24px;text-align:center;color:var(--muted)}
+.date-filter{display:flex;gap:6px;align-items:end;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);padding:8px;border-radius:7px;margin-bottom:10px}
+.date-filter label{display:flex;flex-direction:column;gap:3px;color:var(--muted);font-size:9px;flex:1;min-width:120px}
+.date-filter input{background:#0d1219;border:1px solid var(--line);border-radius:4px;color:var(--text);padding:5px;font:inherit}
+.date-filter button{font-size:10px;height:27px}
 
 /* Status dot na titlebar */
 .status-dot{width:8px;height:8px;border-radius:50%;background:#ec3c3c;margin-left:8px;flex-shrink:0;transition:background .4s,box-shadow .4s;cursor:default}
@@ -349,12 +359,29 @@ h2:first-child{margin-top:2px}
     <!-- PAGE 3: MATCHES -->
     <div class="page" id="page-matches">
       <h2>Partidas recentes</h2>
+      <div class="date-filter">
+        <label>De<input type="text" id="matches-date-from" placeholder="DD/MM/AAAA, DD ou MM/AAAA" inputmode="numeric"></label>
+        <label>Até<input type="text" id="matches-date-to" placeholder="DD/MM/AAAA, DD ou MM/AAAA" inputmode="numeric"></label>
+        <button id="matches-date-clear">Limpar</button>
+      </div>
       <div id="matches"></div>
     </div>
 
     <!-- PAGE 4: CONFIGURAÇÃO -->
     <div class="page" id="page-settings">
       <h2>Configurações</h2>
+
+      <div class="card" id="community-card" style="padding:12px; margin-bottom:12px; border:1px solid var(--accent-soft);">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+          <div>
+            <div style="font-weight:700; color:var(--text); font-size:11px;">Dados da comunidade</div>
+            <small style="color:var(--muted); font-size:9px; line-height:1.4;">Contribui partidas anonimizadas. O backup só pode ser recuperado se você vincular um e-mail.</small>
+          </div>
+          <input type="checkbox" id="setting-community-opt-in" style="accent-color:var(--red); cursor:pointer; width:14px; height:14px;">
+        </div>
+        <div id="community-status" style="color:var(--muted); font-size:9px; margin-top:8px;">Contribuição desativada.</div>
+        <button id="btn-community-backup" style="width:100%; margin-top:6px; padding:7px; background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:5px; cursor:pointer;">Vincular e-mail para recuperação</button>
+      </div>
 
       <!-- CARD 1: TECLAS DE ATALHO -->
       <div class="card" style="padding:12px; margin-bottom:12px;">
@@ -418,6 +445,21 @@ h2:first-child{margin-top:2px}
           <div id="custom-shortcut-close-map-container" style="display:none; justify-content:flex-end;">
             <input type="text" id="setting-custom-shortcut-close-map" placeholder="Ex: Backspace" style="background:#131820; border:1px solid #313a46; color:#dce0e6; border-radius:4px; padding:3px 6px; font-size:10px; outline:none; width:160px; text-align:right;">
           </div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:12px; margin-bottom:12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+          <div>
+            <div style="font-weight:600; color:var(--text);">Tema do overlay</div>
+            <small style="color:var(--muted); font-size:9px;">Escolha a aparência da interface.</small>
+          </div>
+          <select id="setting-theme" style="background:#1c222b; border:1px solid #313a46; color:#dce0e6; border-radius:4px; padding:4px 6px; font-size:10px; outline:none; cursor:pointer;">
+            <option value="blood">Blood (padrão)</option>
+            <option value="ocean">Ocean</option>
+            <option value="forest">Forest</option>
+            <option value="amber">Amber</option>
+          </select>
         </div>
       </div>
 
@@ -532,6 +574,7 @@ var itemImages = {};
 var addonImages = {};
 var offeringImages = {};
 var mapImages = {};
+var communityOfficialEmail = null;
 
 function get(path) {
   return fetch(api + path).then(function(r) {
@@ -564,16 +607,29 @@ document.querySelectorAll('.tab').forEach(function(tab) {
   });
 });
 
-function bars(id, rows, key) {
+function bars(id, rows, key, initialLimit) {
   var el = $(id);
   if (!rows || !rows.length) { el.innerHTML = '<small style="color:var(--muted)">Sem dados.</small>'; return; }
-  el.innerHTML = rows.slice(0, 8).map(function(x) {
+  var limit = initialLimit || 4;
+  var expanded = el.dataset.expanded === 'true';
+  var visibleRows = expanded ? rows : rows.slice(0, limit);
+  el.innerHTML = visibleRows.map(function(x) {
     var name = x[key] + (x.winrate !== undefined ? ' (' + x.winrate + '%WR)' : '');
     return '<div class="bar"><div class="bar-top"><span class="bar-name">' +
       (x.image ? '<img class="thumb" src="' + esc(x.image) + '" title="' + esc(x[key]) + '">' : '') +
       esc(name) + '</span><small>' + x.count + ' &nbsp;' + x.pct + '%</small></div>' +
       '<div class="track"><div class="fill" style="width:' + Math.max(2, x.pct) + '%"></div></div></div>';
   }).join('');
+  if (rows.length > limit) {
+    var toggle = document.createElement('button');
+    toggle.className = 'bars-toggle';
+    toggle.textContent = expanded ? 'Mostrar menos' : 'Ver todos (' + rows.length + ')';
+    toggle.onclick = function() {
+      el.dataset.expanded = expanded ? 'false' : 'true';
+      bars(id, rows, key, limit);
+    };
+    el.appendChild(toggle);
+  }
 }
 
 var sectionLabels = {
@@ -744,6 +800,7 @@ function buildMatchDetail(x) {
 }
 
 var matchData = [];
+var allMatchData = [];
 var openMatchIds = new Set();
 var matchesContainerBound = false;
 
@@ -821,6 +878,51 @@ function renderMatches() {
   }
 }
 
+function filterMatchesByDate() {
+  var fromText = $('matches-date-from').value.trim();
+  var toText = $('matches-date-to').value.trim();
+  localStorage.setItem('matches-date-from', fromText);
+  localStorage.setItem('matches-date-to', toText);
+  var from = parseDateFilter(fromText, false);
+  var to = parseDateFilter(toText, true);
+  matchData = allMatchData.filter(function(match) {
+    var date = new Date(match.played_at);
+    if (Number.isNaN(date.valueOf())) return false;
+    var day = date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+    return (!from || day >= from.from) && (!to || day <= to.to);
+  });
+  renderMatches();
+}
+
+function parseDateFilter(value, endOfRange) {
+  if (!value) return null;
+  var parts = value.replace(/-/g, '/').split('/').map(function(part) { return part.trim(); }).filter(Boolean);
+  var now = new Date();
+  var day, month, year;
+  if (parts.length === 1) {
+    if (/^\d{4}$/.test(parts[0])) {
+      year = Number(parts[0]);
+      return { from: year + '-01-01', to: year + '-12-31' };
+    }
+    day = Number(parts[0]); month = now.getMonth() + 1; year = now.getFullYear();
+  } else if (parts.length === 2) {
+    if (/^\d{4}$/.test(parts[1])) {
+      month = Number(parts[0]); year = Number(parts[1]);
+      if (month < 1 || month > 12) return null;
+      var lastDay = new Date(year, month, 0).getDate();
+      return { from: year + '-' + String(month).padStart(2, '0') + '-01', to: year + '-' + String(month).padStart(2, '0') + '-' + lastDay };
+    }
+    day = Number(parts[0]); month = Number(parts[1]); year = now.getFullYear();
+  } else if (parts.length === 3) {
+    day = Number(parts[0]); month = Number(parts[1]); year = Number(parts[2]);
+    if (year < 100) year += 2000;
+  } else return null;
+  var parsed = new Date(year, month - 1, day);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return null;
+  var key = year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+  return { from: key, to: key };
+}
+
 var trendsGlobal = false;
 
 async function load() {
@@ -830,7 +932,7 @@ async function load() {
       get('/stats/overview'),
       get('/stats/killers' + trendsQuerySuffix),
       get('/stats/maps' + trendsQuerySuffix),
-      get('/matches?limit=15'),
+      get('/matches?limit=500'),
       get('/official-sections'),
       get('/stats/perks?scope=own-survivor'),
       get('/stats/perks?scope=own-killer'),
@@ -874,16 +976,17 @@ async function load() {
     characterSection('killerStats','killerTitle','killerCard', top, 'killer');
 
     // Page 2
-    bars('characters-own-survivor', cOwnSurv, 'character');
-    bars('characters-own-killer', cOwnKiller, 'character');
-    bars('perks-own-survivor', pOwnSurv, 'perk');
-    bars('perks-own-killer', pOwnKiller, 'perk');
-    bars('perks-others-survivor', pOthersSurv, 'perk');
-    bars('perks-others-killer', pOthersKiller, 'perk');
-    bars('killers', k, 'killer');
-    bars('maps', m, 'map');
+    bars('characters-own-survivor', cOwnSurv, 'character', 3);
+    bars('characters-own-killer', cOwnKiller, 'character', 3);
+    bars('perks-own-survivor', pOwnSurv, 'perk', 4);
+    bars('perks-own-killer', pOwnKiller, 'perk', 4);
+    bars('perks-others-survivor', pOthersSurv, 'perk', 4);
+    bars('perks-others-killer', pOthersKiller, 'perk', 4);
+    bars('killers', k, 'killer', 4);
+    bars('maps', m, 'map', 4);
 
     // Page 3
+    allMatchData = recent;
     matchData = recent;
     renderMatches();
 
@@ -1156,6 +1259,8 @@ function bindShortcutEvents(selectId, containerId, customInputId) {
 
 function initOverlaySettings() {
   window.dbd.getOverlaySettings().then(function(settings) {
+    applyTheme(settings.theme || 'blood');
+    $('setting-theme').value = settings.theme || 'blood';
     // Detector
     $('setting-overlay-corner').value = settings.overlayCorner || 'top-right';
     $('setting-overlay-opacity').value = settings.overlayOpacity || 70;
@@ -1176,8 +1281,52 @@ function initOverlaySettings() {
     $('setting-always-on-top').checked = settings.alwaysOnTop !== false;
     $('setting-start-with-system').checked = !!settings.startWithSystem;
     $('setting-start-minimized').checked = !!settings.startMinimized;
+    $('setting-community-opt-in').checked = !!settings.communityOptIn;
+    window.dbd.communityStatus().then(updateCommunityStatus);
   });
 }
+
+function applyTheme(theme) {
+  var allowed = ['blood', 'ocean', 'forest', 'amber'];
+  document.documentElement.dataset.theme = allowed.indexOf(theme) >= 0 ? theme : 'blood';
+}
+
+function updateCommunityStatus(status) {
+  if (!status) return;
+  var email = status.email || status.pendingEmail;
+  var message = status.message || (status.configured ? 'Pronto.' : 'Configure a integração do Supabase.');
+  if (email && !status.emailConfirmed && !/confirma|enviando/i.test(message)) {
+    message = 'Confirmação pendente. Verifique a caixa de entrada de ' + email + '.';
+  }
+  $('community-status').textContent = message;
+  var backupButton = $('btn-community-backup');
+  if (email) {
+    backupButton.textContent = 'Ver e-mail vinculado';
+    backupButton.onclick = function() {
+      var confirmation = status.emailConfirmed ? 'confirmado' : 'aguardando confirmação';
+      window.alert('E-mail vinculado: ' + email + '\nStatus: ' + confirmation + '.');
+    };
+  } else {
+    communityOfficialEmail = status.officialEmail || null;
+    backupButton.textContent = status.officialEmail ? 'Usar e-mail da conta Behaviour' : 'Concluir login Behaviour primeiro';
+    backupButton.onclick = linkCommunityEmail;
+  }
+}
+function linkCommunityEmail() {
+  var email = communityOfficialEmail;
+  if (!email) {
+    updateCommunityStatus({ message: 'E-mail da Behaviour não encontrado. Conclua o login oficial e atualize os dados.' });
+    return;
+  }
+  $('btn-community-backup').disabled = true;
+  updateCommunityStatus({ email: email.trim(), message: 'Enviando confirmação para o e-mail informado...' });
+  window.dbd.linkCommunityEmail(email).then(updateCommunityStatus).catch(function(error) {
+    updateCommunityStatus({ message: error.message });
+  }).finally(function() {
+    $('btn-community-backup').disabled = false;
+  });
+}
+window.dbd.onCommunityStatus(updateCommunityStatus);
 
 function saveOverlaySettings() {
   var corner = $('setting-overlay-corner').value;
@@ -1227,6 +1376,28 @@ $('setting-map-check-language').onchange = saveOverlaySettings;
 $('setting-always-on-top').onchange = saveOverlaySettings;
 $('setting-start-with-system').onchange = saveOverlaySettings;
 $('setting-start-minimized').onchange = saveOverlaySettings;
+$('setting-theme').onchange = function() {
+  applyTheme(this.value);
+  window.dbd.saveOverlaySettings({ theme: this.value });
+};
+$('setting-community-opt-in').onchange = function() {
+  window.dbd.setCommunityOptIn(this.checked).then(updateCommunityStatus).catch(function(error) {
+    this.checked = false;
+    updateCommunityStatus({ message: error.message });
+  }.bind(this));
+};
+$('btn-community-backup').onclick = linkCommunityEmail;
+$('matches-date-from').value = localStorage.getItem('matches-date-from') || '';
+$('matches-date-to').value = localStorage.getItem('matches-date-to') || '';
+$('matches-date-from').oninput = filterMatchesByDate;
+$('matches-date-to').oninput = filterMatchesByDate;
+$('matches-date-from').onchange = filterMatchesByDate;
+$('matches-date-to').onchange = filterMatchesByDate;
+$('matches-date-clear').onclick = function() {
+  $('matches-date-from').value = '';
+  $('matches-date-to').value = '';
+  filterMatchesByDate();
+};
 $('btn-show-preview').onclick = function() {
   window.dbd.showMapPreview();
 };

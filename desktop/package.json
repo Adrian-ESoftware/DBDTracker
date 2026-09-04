@@ -1,10 +1,14 @@
 {
   "name": "dbd-tracker-overlay",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "DBD Stats Overlay",
   "author": "local",
   "private": true,
   "type": "module",
+  "allowScripts": {
+    "electron@36.3.1": true,
+    "electron-winstaller@5.4.0": true
+  },
   "main": "main.js",
   "repository": {
     "type": "git",
@@ -40,8 +44,7 @@
       "dbd-map-catalog.json",
       "overlay.html",
       "tray_icons",
-      "map_overlays",
-      ".env"
+      "map_overlays"
     ],
     "win": {
       "target": "portable",

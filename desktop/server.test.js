@@ -4,7 +4,7 @@ import { openDatabase } from "./database.js";
 import { startServer } from "./server.js";
 
 test("recebe coleta pela API local", async () => {
-  const server = startServer(openDatabase(":memory:"), 0);
+  const server = startServer(openDatabase(":memory:"), 0, "./map_overlays");
   await new Promise(resolve => server.once("listening", resolve));
   const port = server.address().port;
   const payload = [{ source_id: "api-one", played_at: "2026-06-08T10:00:00Z", role: "killer", character: "Trapper", loadout: { perks: [], addons: [] }, participants: [] }];
@@ -28,5 +28,12 @@ test("recebe coleta pela API local", async () => {
   assert.equal(blocked.status, 403);
   const allowed = await fetch(`http://127.0.0.1:${port}/api/official-metrics`, { headers: { origin: "https://stats.deadbydaylight.com" } });
   assert.equal(allowed.status, 200);
+
+  // Teste de map overlays e proteção contra path traversal
+  const overlayBlocked = await fetch(`http://127.0.0.1:${port}/api/map-overlays/..%2f..%2fpackage.json`);
+  assert.equal(overlayBlocked.status, 403);
+  const overlayNotFound = await fetch(`http://127.0.0.1:${port}/api/map-overlays/non_existent.png`);
+  assert.equal(overlayNotFound.status, 404);
+
   await new Promise(resolve => server.close(resolve));
 });

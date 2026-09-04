@@ -266,7 +266,7 @@ async function fetchApi(url, token, options = {}) {
   }
 }
 
-export function createBackgroundCollector(db, onStatus) {
+export function createBackgroundCollector(db, onStatus, onMatches) {
   let browser = null;
   let timer = null;
   let loginCheckInterval = null;
@@ -308,6 +308,9 @@ export function createBackgroundCollector(db, onStatus) {
     const matches = findMatches(payload);
     if (matches.length) {
       await ingestMatches(db, matches);
+      if (typeof onMatches === "function") {
+        await onMatches(matches);
+      }
     }
     if (/\/player-stats\/games\/dbd\/providers\//i.test(url) && payload?.data) {
       const isRegular = /matchCategory=Regular/i.test(url);
@@ -524,6 +527,7 @@ export function createBackgroundCollector(db, onStatus) {
           if (profile?.email && db.userEmail !== profile.email) {
             db.userEmail = profile.email;
             saveConfig({ userEmail: profile.email });
+            console.log(`[Collector] E-mail obtido via API: ${profile.email}`);
           }
         }
       } catch (err) {

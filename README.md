@@ -4,7 +4,7 @@ Overlay desktop local inspirado no Valorant Tracker. Ele fica sobre o Dead by Da
 
 ## Coleta autonoma
 
-O app em `desktop-tauri/` foi recriado a partir do boilerplate oficial `npm create tauri-app@latest` com Tauri v2 e possui uma janela interna persistente que fica oculta durante o uso normal:
+O app em `desktop/` usa Electron e possui uma janela interna persistente que fica oculta durante o uso normal:
 
 1. Clique em **Fazer login** apenas na primeira vez.
 2. Entre na sua conta na janela oficial `stats.deadbydaylight.com`.
@@ -32,9 +32,9 @@ As partidas sao identificadas por uma chave estavel e importadas com `UPSERT`: p
 Requer Node.js 22 ou mais recente, Rust e as dependencias de sistema do Tauri v2.
 
 ```bash
-cd desktop-tauri
+cd desktop
 npm install
-npm run dev
+npm start
 ```
 
 O SQLite `dbd_tracker.sqlite3` fica na pasta de dados do aplicativo Tauri.
@@ -49,8 +49,18 @@ Use o modo **janela sem bordas** do Dead by Daylight para o overlay permanecer v
 ## Gerar executavel
 
 ```bash
-cd desktop-tauri
-npm run build
+cd desktop
+npm run dist
 ```
 
-O instalador sera criado pelos targets do Tauri em `desktop-tauri/src-tauri/target/release/bundle/`.
+O instalador será criado pelo electron-builder na pasta `desktop/dist/`.
+
+## Dados da comunidade
+
+O SQLite local e a fonte dos dados pessoais do jogador. A contribuicao comunitaria deve ser opt-in e enviar somente partidas normalizadas para `supabase/functions/community-ingest`.
+
+O Supabase usa uma sessao anonima invisivel para controlar a contribuicao. E-mail e senha sao opcionais e servem apenas para transformar essa sessao em um backup recuperavel em outro computador; perder o SQLite antes de vincular um e-mail impede a recuperacao.
+
+O desktop nao acessa o Supabase diretamente e nenhum `service_role` deve ser colocado no `.env` ou no executavel. A Edge Function valida o JWT do usuario, remove payloads crus e dados de conta, deduplica partidas e atualiza agregacoes publicas com um minimo de 20 partidas.
+
+Para configurar o backend, aplique `desktop/supabase_schema.sql` em um projeto Supabase e configure `DBD_PUBLISHABLE_KEY` e `DBD_SERVICE_ROLE_KEY` apenas nos secrets da Function. A URL do Supabase é fornecida automaticamente. A chave de service role nunca deve ser configurada no Electron.

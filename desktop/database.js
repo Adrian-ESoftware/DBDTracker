@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { createClient } from "@supabase/supabase-js";
 
 const percentage = (count, total) => total ? Math.round(count * 1000 / total) / 10 : 0;
 const ASSET_BASE = "https://assets.live.bhvraccount.com/";
@@ -315,7 +314,11 @@ export function openDatabase(path) {
     }
   }
 
-  if (path === ":memory:" || !process.env.SUPABASE_URL) {
+  // The desktop process must never connect directly to the shared database.
+  // A Supabase service-role key in a distributed Electron app is extractable.
+  // Community uploads go through the authenticated server-side ingestion API.
+  const useRemoteDatabase = false;
+  if (path === ":memory:" || !useRemoteDatabase) {
     if (path === ":memory:") {
       const db = new DatabaseSync(":memory:");
       db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
@@ -370,10 +373,6 @@ export function openDatabase(path) {
     }
     cleanupDuplicatesSqlite(localDb);
     return { type: "sqlite", db: localDb };
-  } else {
-    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-    cleanupDuplicatesSupabase(supabase);
-    return { type: "supabase", client: supabase };
   }
 }
 
