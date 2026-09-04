@@ -41,6 +41,7 @@
       "database.js",
       "server.js",
       "background-collector.js",
+      "community.js",
       "dbd-map-catalog.json",
       "overlay.html",
       "tray_icons",
