@@ -33,6 +33,8 @@ jobs:
 
       - name: Verificar se há nova versão
         id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
@@ -46,9 +48,16 @@ jobs:
             TAG="v$VERSION"
             echo "Versão detectada no package.json: $VERSION"
 
-            if git rev-parse "$TAG" >/dev/null 2>&1 && [ "${{ github.event.inputs.force_release }}" != "true" ]; then
-              echo "Tag $TAG já existe no repositório. Nenhuma nova versão para publicar."
-              echo "should_release=false" >> "$GITHUB_OUTPUT"
+            if git ls-remote --exit-code --refs origin "refs/tags/$TAG" >/dev/null 2>&1 && [ "${{ github.event.inputs.force_release }}" != "true" ]; then
+              if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+                echo "Tag e release $TAG já existem. Nenhuma nova versão para publicar."
+                echo "should_release=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "Tag $TAG existe, mas a release não. Reutilizando a tag para publicar a release."
+                echo "should_release=true" >> "$GITHUB_OUTPUT"
+                echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+                echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+              fi
             else
               echo "Nova versão detectada para publicação: $VERSION ($TAG)"
               echo "should_release=true" >> "$GITHUB_OUTPUT"
@@ -181,7 +190,10 @@ jobs:
           TAG="${{ needs.check-version.outputs.tag_name }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+          git fetch --tags origin
+          if git ls-remote --exit-code --refs origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "A tag $TAG já existe no remoto. Ela será reutilizada."
+          else
             git tag -a "$TAG" -m "Release $TAG"
             git push origin "$TAG"
           fi
