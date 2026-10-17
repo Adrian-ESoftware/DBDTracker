@@ -74,20 +74,58 @@ export async function refreshStats(db: D1Database): Promise<void> {
     db.prepare("DELETE FROM public_killer_stats"),
     db.prepare("DELETE FROM public_perk_stats"),
 
-    // Character stats
+    // Character stats (survivors and killers from matches and participants)
     db.prepare(`
       INSERT INTO public_character_stats (patch_version, role, character_id, match_count, escapes, kills, average_score)
       SELECT
-        COALESCE(patch_version, 'unknown'),
+        patch_version,
         role,
-        COALESCE(character_id, ''),
-        COUNT(*),
-        SUM(CASE WHEN role = 'survivor' AND LOWER(COALESCE(result, '')) LIKE '%escape%' THEN 1 ELSE 0 END),
-        SUM(CASE WHEN role = 'killer' THEN COALESCE(kills_count, 0) ELSE 0 END),
-        CAST(ROUND(AVG(score)) AS INTEGER)
-      FROM community_matches
-      WHERE character_id IS NOT NULL AND character_id != ''
-      GROUP BY COALESCE(patch_version, 'unknown'), role, COALESCE(character_id, '')
+        character_id,
+        COUNT(*) as match_count,
+        SUM(escapes) as escapes,
+        SUM(kills) as kills,
+        CAST(ROUND(AVG(score)) AS INTEGER) as average_score
+      FROM (
+        -- Matches characters
+        SELECT
+          COALESCE(patch_version, 'unknown') as patch_version,
+          role,
+          character_id,
+          CASE WHEN role = 'survivor' AND LOWER(COALESCE(result, '')) LIKE '%escape%' THEN 1 ELSE 0 END as escapes,
+          CASE WHEN role = 'killer' THEN COALESCE(kills_count, 0) ELSE 0 END as kills,
+          score
+        FROM community_matches
+        WHERE character_id IS NOT NULL AND character_id != ''
+
+        UNION ALL
+
+        -- Killer character from survivor matches
+        SELECT
+          COALESCE(patch_version, 'unknown') as patch_version,
+          'killer' as role,
+          killer_id as character_id,
+          0 as escapes,
+          COALESCE(kills_count, 0) as kills,
+          NULL as score
+        FROM community_matches
+        WHERE role = 'survivor' AND killer_id IS NOT NULL AND killer_id != ''
+
+        UNION ALL
+
+        -- Participants characters
+        SELECT
+          COALESCE(m.patch_version, 'unknown') as patch_version,
+          p.role,
+          p.character_id,
+          CASE WHEN p.role = 'survivor' AND LOWER(COALESCE(p.result, '')) LIKE '%escape%' THEN 1 ELSE 0 END as escapes,
+          0 as kills,
+          NULL as score
+        FROM community_match_participants p
+        JOIN community_matches m ON m.id = p.match_id
+        WHERE p.character_id IS NOT NULL AND p.character_id != ''
+          AND p.role IN ('survivor', 'killer')
+      )
+      GROUP BY patch_version, role, character_id
     `),
 
     // Map stats
@@ -105,48 +143,72 @@ export async function refreshStats(db: D1Database): Promise<void> {
       GROUP BY COALESCE(patch_version, 'unknown'), role, COALESCE(map_id, '')
     `),
 
-    // Killer stats
+    // Killer stats (from both killer role and survivor matches where killer was encountered)
     db.prepare(`
       INSERT INTO public_killer_stats (patch_version, killer_id, match_count, kills, average_kills)
       SELECT
-        COALESCE(patch_version, 'unknown'),
+        patch_version,
         killer_id,
-        COUNT(*),
-        SUM(COALESCE(kills_count, 0)),
-        ROUND(CAST(SUM(COALESCE(kills_count, 0)) AS REAL) / COUNT(*), 2)
-      FROM community_matches
-      WHERE killer_id IS NOT NULL AND killer_id != ''
-      GROUP BY COALESCE(patch_version, 'unknown'), killer_id
+        COUNT(*) as match_count,
+        SUM(kills) as kills,
+        ROUND(CAST(SUM(kills) AS REAL) / COUNT(*), 2) as average_kills
+      FROM (
+        SELECT
+          COALESCE(patch_version, 'unknown') as patch_version,
+          COALESCE(killer_id, CASE WHEN role = 'killer' THEN character_id END) as killer_id,
+          COALESCE(kills_count, 0) as kills
+        FROM community_matches
+        WHERE COALESCE(killer_id, CASE WHEN role = 'killer' THEN character_id END) IS NOT NULL
+          AND COALESCE(killer_id, CASE WHEN role = 'killer' THEN character_id END) != ''
+      )
+      GROUP BY patch_version, killer_id
     `),
 
-    // Survivor & Killer perks from JSON
+    // Unified Perk stats (Player loadout, killer loadout, and participants)
     db.prepare(`
       INSERT INTO public_perk_stats (patch_version, role, perk_id, usage_count)
       SELECT
-        COALESCE(m.patch_version, 'unknown'),
-        m.role,
-        perk.value,
-        COUNT(*)
-      FROM community_matches m
-      JOIN community_match_loadouts l ON l.match_id = m.id
-      JOIN json_each(l.perks_json) perk
-      WHERE perk.value IS NOT NULL AND perk.value != ''
-      GROUP BY COALESCE(m.patch_version, 'unknown'), m.role, perk.value
-    `),
+        patch_version,
+        role,
+        perk_id,
+        COUNT(*) as usage_count
+      FROM (
+        -- Perks from player loadout (survivor or killer)
+        SELECT
+          COALESCE(m.patch_version, 'unknown') as patch_version,
+          m.role as role,
+          perk.value as perk_id
+        FROM community_matches m
+        JOIN community_match_loadouts l ON l.match_id = m.id
+        JOIN json_each(l.perks_json) perk
+        WHERE perk.value IS NOT NULL AND perk.value != ''
 
-    // Killer perks from killer_perks_json
-    db.prepare(`
-      INSERT INTO public_perk_stats (patch_version, role, perk_id, usage_count)
-      SELECT
-        COALESCE(m.patch_version, 'unknown'),
-        'killer',
-        perk.value,
-        COUNT(*)
-      FROM community_matches m
-      JOIN community_match_loadouts l ON l.match_id = m.id
-      JOIN json_each(l.killer_perks_json) perk
-      WHERE perk.value IS NOT NULL AND perk.value != ''
-      GROUP BY COALESCE(m.patch_version, 'unknown'), perk.value
+        UNION ALL
+
+        -- Killer perks recorded when player was survivor
+        SELECT
+          COALESCE(m.patch_version, 'unknown') as patch_version,
+          'killer' as role,
+          perk.value as perk_id
+        FROM community_matches m
+        JOIN community_match_loadouts l ON l.match_id = m.id
+        JOIN json_each(l.killer_perks_json) perk
+        WHERE m.role = 'survivor' AND perk.value IS NOT NULL AND perk.value != ''
+
+        UNION ALL
+
+        -- Perks from match participants
+        SELECT
+          COALESCE(m.patch_version, 'unknown') as patch_version,
+          p.role as role,
+          perk.value as perk_id
+        FROM community_matches m
+        JOIN community_match_participants p ON p.match_id = m.id
+        JOIN json_each(p.perks_json) perk
+        WHERE p.role IN ('survivor', 'killer')
+          AND perk.value IS NOT NULL AND perk.value != ''
+      )
+      GROUP BY patch_version, role, perk_id
     `)
   ];
 
@@ -425,12 +487,14 @@ export default {
         await env.DB.batch(statements.slice(i, i + CHUNK_SIZE));
       }
 
+      ctx.waitUntil(refreshStats(env.DB));
+
       return json({ accepted: clean.length });
     }
 
     // ── 4. Estatísticas Agregadas para o Overlay UI ──
     if (request.method === "GET" && pathname === "/api/community-stats") {
-      const [charactersRes, mapsRes, killersRes, perksRes] = await Promise.all([
+      let [charactersRes, mapsRes, killersRes, perksRes] = await Promise.all([
         env.DB.prepare("SELECT role, character_id, match_count FROM public_character_stats").all<{
           role: string;
           character_id: string;
@@ -450,6 +514,49 @@ export default {
           usage_count: number;
         }>()
       ]);
+
+      let characterRows = charactersRes.results || [];
+      let mapRows = mapsRes.results || [];
+      let perkRows = perksRes.results || [];
+      let killerRows = killersRes.results || [];
+
+      // Se todas as tabelas estiverem vazias, executa refresh síncrono para preencher de imediato
+      if (
+        characterRows.length === 0 &&
+        mapRows.length === 0 &&
+        killerRows.length === 0 &&
+        perkRows.length === 0
+      ) {
+        try {
+          await refreshStats(env.DB);
+          [charactersRes, mapsRes, killersRes, perksRes] = await Promise.all([
+            env.DB.prepare("SELECT role, character_id, match_count FROM public_character_stats").all<{
+              role: string;
+              character_id: string;
+              match_count: number;
+            }>(),
+            env.DB.prepare("SELECT role, map_id, match_count FROM public_map_stats").all<{
+              role: string;
+              map_id: string;
+              match_count: number;
+            }>(),
+            env.DB.prepare(
+              "SELECT killer_id, match_count, average_kills FROM public_killer_stats"
+            ).all<{ killer_id: string; match_count: number; average_kills: number }>(),
+            env.DB.prepare("SELECT role, perk_id, usage_count FROM public_perk_stats").all<{
+              role: string;
+              perk_id: string;
+              usage_count: number;
+            }>()
+          ]);
+          characterRows = charactersRes.results || [];
+          mapRows = mapsRes.results || [];
+          perkRows = perksRes.results || [];
+          killerRows = killersRes.results || [];
+        } catch (err) {
+          console.error("Falha ao inicializar estatísticas:", err);
+        }
+      }
 
       const aggregate = (
         rows: any[],
@@ -472,21 +579,6 @@ export default {
           .sort((a, b) => b.count - a.count);
       };
 
-      const characterRows = charactersRes.results || [];
-      const mapRows = mapsRes.results || [];
-      const perkRows = perksRes.results || [];
-      const killerRows = killersRes.results || [];
-
-      // Se todas as tabelas estiverem vazias, executa refresh assíncrono para inicializar
-      if (
-        characterRows.length === 0 &&
-        mapRows.length === 0 &&
-        killerRows.length === 0 &&
-        perkRows.length === 0
-      ) {
-        ctx.waitUntil(refreshStats(env.DB));
-      }
-
       const responseData = {
         characters: {
           survivor: aggregate(characterRows.filter(r => r.role === "survivor"), "character_id"),
@@ -507,8 +599,9 @@ export default {
         }
       };
 
+      const hasData = characterRows.length > 0 || mapRows.length > 0 || killerRows.length > 0 || perkRows.length > 0;
       return json(responseData, 200, {
-        "Cache-Control": "public, max-age=60, s-maxage=300"
+        "Cache-Control": hasData ? "public, max-age=60, s-maxage=300" : "no-cache"
       });
     }
 
@@ -518,8 +611,12 @@ export default {
       if (env.ADMIN_KEY && authHeader !== `Bearer ${env.ADMIN_KEY}`) {
         return json({ error: "unauthorized" }, 401);
       }
-      await refreshStats(env.DB);
-      return json({ refreshed: true });
+      try {
+        await refreshStats(env.DB);
+        return json({ refreshed: true });
+      } catch (err: any) {
+        return json({ error: err?.message || String(err), stack: err?.stack }, 500);
+      }
     }
 
     return json({ error: "not_found" }, 404);

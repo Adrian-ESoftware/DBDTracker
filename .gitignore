@@ -35,10 +35,8 @@ desktop/*.db
 *.sqlite-wal
 *.sqlite-shm
 
-# Supabase local state and generated files
-supabase/.temp/
-supabase/.branches/
-supabase/.cache/
+# Cloudflare Wrangler
+.wrangler/
 
 # Logs
 logs/

@@ -984,6 +984,7 @@ async function load() {
       if (!perkImages[pName]) perkImages[pName] = catalogPerks[pName];
     }
     if (trendsGlobal && community) {
+      cOwnSurv.concat(cOwnKiller).forEach(function(x) { x.image = (allAssets.characters || {})[x.character]; });
       k.forEach(function(x) { x.image = (allAssets.characters || {})[x.killer]; });
       m.forEach(function(x) { x.image = mapImages[x.map]; });
       pOthersSurv.concat(pOthersKiller).forEach(function(x) { x.image = perkImages[x.perk]; });
