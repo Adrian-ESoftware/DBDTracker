@@ -319,14 +319,6 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
         section: isRegular ? "regular-trials" : "overview",
         captured_at: new Date().toISOString()
       });
-      // Se for a visão geral, preenche também regular-trials como base
-      if (!isRegular) {
-        await ingestOfficialSections(db, {
-          data: payload.data,
-          section: "regular-trials",
-          captured_at: new Date().toISOString()
-        });
-      }
     }
     await ingestSnapshots(db, [{
       source_url: url,

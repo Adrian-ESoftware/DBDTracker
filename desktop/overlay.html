@@ -648,11 +648,13 @@ var sectionLabels = {
   bpEarnedThroughMatch: 'Total BP'
 };
 
+function findSection(rows, period, role) {
+  return rows.find(function(x) { return x.section === 'regular-trials' && x.period === period && x.role === role; })
+    || rows.find(function(x) { return x.section === 'overview' && x.period === period && x.role === role; });
+}
+
 function globalSection(id, rows, role) {
-  var row = rows.find(function(x) { return (x.section === 'regular-trials' || x.section === 'overview') && x.period === 'all-time' && x.role === role; });
-  if (!row) {
-    row = rows.find(function(x) { return (x.section === 'regular-trials' || x.section === 'overview') && x.period === '30-days' && x.role === role; });
-  }
+  var row = findSection(rows, 'all-time', role) || findSection(rows, '30-days', role);
   var values = (row && row.values) || {};
   var roleKeys = role === 'survivors'
     ? ['totalMatchesPlayed', 'totalHoursPlayed', 'escapeRate', 'matchesEscaped', 'survivorChasesWon', 'survivorSuccessfullyHealed', 'bpEarnedThroughMatch']
@@ -678,10 +680,7 @@ function globalSection(id, rows, role) {
 }
 
 function characterSection(id, titleId, cardId, rows, role) {
-  var row = rows.find(function(x) { return (x.section === 'regular-trials' || x.section === 'overview') && x.period === 'all-time' && x.role === role; });
-  if (!row) {
-    row = rows.find(function(x) { return (x.section === 'regular-trials' || x.section === 'overview') && x.period === '30-days' && x.role === role; });
-  }
+  var row = findSection(rows, 'all-time', role) || findSection(rows, '30-days', role);
   var label = role === 'survivor' ? 'Survivor' : 'Killer';
   var emblems = /Benevolent|Evader|Lightbringer|Unbroken|Chaser|Devout|Gatekeeper|Malicious/i;
   $(titleId).textContent = row ? 'Top ' + label + ' / ' + row.character : 'Top ' + label;

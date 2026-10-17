@@ -578,23 +578,12 @@ export async function ingestOfficialSections(db, payload) {
 
 export async function officialSections(db) {
   const userEmail = db.userEmail ?? "default";
-  if (db.type === "sqlite") {
-    return db.db.prepare("SELECT section,period,role,captured_at,raw_json FROM official_sections WHERE user_email = ? AND role IN ('killers','survivors','general') ORDER BY period,role").all(userEmail)
-      .map(row => ({ ...row, values: parse(row.raw_json), raw_json: undefined }));
-  } else {
-    const { data } = check(await db.client
-      .from("official_sections")
-      .select("section,period,role,captured_at,raw_json")
-      .eq("user_email", userEmail)
-      .in("role", ["killers", "survivors", "general"])
-      .order("period", { ascending: true })
-      .order("role", { ascending: true }));
-    return (data || []).map(row => ({
-      ...row,
-      values: parse(row.raw_json),
-      raw_json: undefined
-    }));
-  }
+  return db.db.prepare(`
+    SELECT section,period,role,captured_at,raw_json FROM official_sections
+    WHERE user_email = ? AND role IN ('killers','survivors','general')
+    ORDER BY period, CASE WHEN section = 'regular-trials' THEN 0 ELSE 1 END, role
+  `).all(userEmail)
+    .map(row => ({ ...row, values: parse(row.raw_json), raw_json: undefined }));
 }
 
 export async function ingestTopCharacter(db, payload) {
