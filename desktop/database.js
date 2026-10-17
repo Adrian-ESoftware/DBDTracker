@@ -46,11 +46,7 @@ function isMoreOrEquallyComplete(incoming, existing) {
 }
 
 export function cleanupDuplicates(db) {
-  if (db.type === "sqlite") {
-    cleanupDuplicatesSqlite(db.db);
-  } else {
-    cleanupDuplicatesSupabase(db.client);
-  }
+  cleanupDuplicatesSqlite(db.db);
 }
 
 function cleanupDuplicatesSqlite(db) {
@@ -112,82 +108,6 @@ function cleanupDuplicatesSqlite(db) {
   }
 }
 
-async function cleanupDuplicatesSupabase(supabase) {
-  try {
-    const { data: matchesList } = check(await supabase
-      .from("matches")
-      .select("id, played_at, role, map, duration_sec, score, user_email"));
-    
-    if (!matchesList) return;
-
-    const groups = new Map();
-    for (const match of matchesList) {
-      const key = `${match.played_at}|${match.role}|${match.user_email || ""}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(match);
-    }
-
-    const deleteIds = [];
-    for (const [key, rows] of groups.entries()) {
-      if (rows.length <= 1) continue;
-
-      const matchIds = rows.map(r => r.id);
-      
-      const { data: pData } = check(await supabase
-        .from("participants")
-        .select("match_id")
-        .in("match_id", matchIds));
-
-      const { data: kData } = check(await supabase
-        .from("killer_info")
-        .select("match_id")
-        .in("match_id", matchIds));
-
-      const pCounts = {};
-      const hasKiller = {};
-      matchIds.forEach(id => {
-        pCounts[id] = 0;
-        hasKiller[id] = false;
-      });
-      pData?.forEach(p => pCounts[p.match_id] = (pCounts[p.match_id] || 0) + 1);
-      kData?.forEach(k => hasKiller[k.match_id] = true);
-
-      const matchesWithInfo = rows.map(row => ({
-        ...row,
-        participants_count: pCounts[row.id] || 0,
-        has_killer_info: hasKiller[row.id] || false
-      }));
-
-      matchesWithInfo.sort((a, b) => {
-        let scoreA = 0;
-        if (a.map && a.map !== "?") scoreA++;
-        if (a.duration_sec && a.duration_sec > 0) scoreA++;
-        if (a.score && a.score > 0) scoreA++;
-        if (a.has_killer_info) scoreA++;
-        if (a.participants_count > 1) scoreA += 2;
-
-        let scoreB = 0;
-        if (b.map && b.map !== "?") scoreB++;
-        if (b.duration_sec && b.duration_sec > 0) scoreB++;
-        if (b.score && b.score > 0) scoreB++;
-        if (b.has_killer_info) scoreB++;
-        if (b.participants_count > 1) scoreB += 2;
-
-        return scoreB - scoreA;
-      });
-
-      for (let i = 1; i < matchesWithInfo.length; i++) {
-        deleteIds.push(matchesWithInfo[i].id);
-      }
-    }
-
-    if (deleteIds.length > 0) {
-      check(await supabase.from("matches").delete().in("id", deleteIds));
-    }
-  } catch (err) {
-    console.error("Failed to clean up Supabase duplicates:", err);
-  }
-}
 
 function indexAssets(db, value) {
   const upsert = db.prepare("INSERT OR REPLACE INTO assets (type,name,url) VALUES (?,?,?)");
@@ -215,47 +135,6 @@ function indexAssets(db, value) {
   visit(value);
 }
 
-async function indexAssetsSupabase(supabase, value) {
-  const visit = async val => {
-    if (Array.isArray(val)) {
-      for (const item of val) await visit(item);
-      return;
-    }
-    if (!val || typeof val !== "object") return;
-    const name = val.name || val.character_name || val.loadout_perk_name || val.character;
-    if (name && val.image?.path) {
-      const path = val.image.path;
-      const type = path.startsWith("characters/") ? "characters" : path.startsWith("maps/") ? "maps" :
-        path.startsWith("perks/") ? "perks" : path.startsWith("items/") ? "items" :
-        path.startsWith("add-ons/") ? "addons" : path.startsWith("offerings/") ? "offerings" : null;
-      if (type) {
-        check(await supabase.from("assets").upsert({
-          type,
-          name,
-          url: asset(path)
-        }));
-        if (val.character_id && val.character_id !== name) {
-          check(await supabase.from("assets").upsert({
-            type,
-            name: val.character_id,
-            url: asset(path)
-          }));
-        }
-        if (val.loadout_perk_id && val.loadout_perk_id !== name) {
-          check(await supabase.from("assets").upsert({
-            type,
-            name: val.loadout_perk_id,
-            url: asset(path)
-          }));
-        }
-      }
-    }
-    for (const item of Object.values(val)) {
-      await visit(item);
-    }
-  };
-  await visit(value);
-}
 
 export function openDatabase(path) {
   let localDb = null;
@@ -391,8 +270,7 @@ function idFor(match, userEmail) {
 
 export async function ingestMatches(db, matches) {
   const userEmail = db.userEmail ?? null;
-  if (db.type === "sqlite") {
-    const upsert = db.db.prepare(`INSERT INTO matches
+  const upsert = db.db.prepare(`INSERT INTO matches
       (id,source_id,played_at,role,character,map,map_realm,duration_sec,result,score,raw_json,imported_at,user_email)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET source_id=excluded.source_id,played_at=excluded.played_at,
@@ -445,213 +323,48 @@ export async function ingestMatches(db, matches) {
       db.db.exec("ROLLBACK");
       throw error;
     }
-    return { received: matches.length, inserted, updated };
-  } else {
-    const supabase = db.client;
-    let inserted = 0, updated = 0;
-
-    for (const match of matches) {
-      if (!match.played_at || !match.role) continue;
-
-      let query = supabase
-        .from("matches")
-        .select("id, map, duration_sec, score")
-        .eq("played_at", match.played_at)
-        .eq("role", match.role);
-      if (userEmail) {
-        query = query.eq("user_email", userEmail);
-      } else {
-        query = query.is("user_email", null);
-      }
-      const { data: existingList } = check(await query);
-
-      const existing = existingList?.[0];
-
-      let id;
-      if (existing) {
-        const { count: pCount } = check(await supabase
-          .from("participants")
-          .select("*", { count: "exact", head: true })
-          .eq("match_id", existing.id));
-
-        const { data: kData } = check(await supabase
-          .from("killer_info")
-          .select("match_id")
-          .eq("match_id", existing.id));
-
-        existing.participants_count = pCount || 0;
-        existing.has_killer_info = !!kData?.length;
-
-        if (!isMoreOrEquallyComplete(match, existing)) {
-          continue;
-        }
-        id = existing.id;
-        updated++;
-      } else {
-        id = idFor(match, userEmail);
-        inserted++;
-      }
-
-      check(await supabase.from("matches").upsert({
-        id,
-        source_id: match.source_id ?? null,
-        played_at: match.played_at,
-        role: match.role,
-        character: match.character ?? null,
-        map: match.map ?? null,
-        map_realm: match.map_realm ?? null,
-        duration_sec: match.duration_sec ?? null,
-        result: match.result ?? null,
-        score: match.score ?? null,
-        raw_json: match.raw ?? null,
-        imported_at: new Date().toISOString(),
-        user_email: userEmail
-      }));
-
-      if (match.raw) {
-        await indexAssetsSupabase(supabase, match.raw);
-      }
-
-      check(await supabase.from("loadouts").delete().eq("match_id", id));
-      check(await supabase.from("killer_info").delete().eq("match_id", id));
-      check(await supabase.from("participants").delete().eq("match_id", id));
-
-      const loadout = match.loadout ?? {};
-      check(await supabase.from("loadouts").insert({
-        match_id: id,
-        perks_json: loadout.perks || [],
-        item: loadout.item ?? null,
-        addons_json: loadout.addons || [],
-        offering: loadout.offering ?? null
-      }));
-
-      if (match.killer_info) {
-        check(await supabase.from("killer_info").insert({
-          match_id: id,
-          killer: match.killer_info.killer ?? null,
-          kills_count: match.killer_info.kills_count ?? null,
-          perks_json: match.killer_info.perks || [],
-          addons_json: match.killer_info.addons || [],
-          offering: match.killer_info.offering ?? null
-        }));
-      }
-
-      if (match.participants?.length) {
-        const partsToInsert = match.participants.map(p => ({
-          match_id: id,
-          character: p.character ?? null,
-          role: p.role,
-          result: p.result ?? null,
-          score: p.score ?? null,
-          perks_json: p.perks || [],
-          item: p.item ?? null,
-          addons_json: p.addons || [],
-          offering: p.offering ?? null
-        }));
-        check(await supabase.from("participants").insert(partsToInsert));
-      }
-    }
-
-    return { received: matches.length, inserted, updated };
-  }
+  return { received: matches.length, inserted, updated };
 }
 
 export async function ingestSnapshots(db, snapshots) {
   const userEmail = db.userEmail ?? null;
-  if (db.type === "sqlite") {
-    const insert = db.db.prepare("INSERT OR IGNORE INTO source_snapshots (id,source_url,kind,captured_at,raw_json,user_email) VALUES (?,?,?,?,?,?)");
-    let inserted = 0;
-    for (const item of snapshots) {
-      const raw = JSON.stringify(item.raw);
-      const id = createHash("sha256").update(`${item.source_url}|${item.captured_at}|${raw}`).digest("hex");
-      inserted += Number(insert.run(id, item.source_url, item.kind ?? "unknown", item.captured_at, raw, userEmail).changes);
-    }
-    return { received: snapshots.length, inserted, updated: 0 };
-  } else {
-    const supabase = db.client;
-    let inserted = 0;
-    for (const item of snapshots) {
-      const id = createHash("sha256").update(`${item.source_url}|${item.captured_at}|${JSON.stringify(item.raw)}`).digest("hex");
-      const { error } = await supabase.from("source_snapshots").insert({
-        id,
-        source_url: item.source_url,
-        kind: item.kind ?? "unknown",
-        captured_at: item.captured_at,
-        raw_json: item.raw,
-        user_email: userEmail
-      });
-      if (!error) inserted++;
-    }
-    return { received: snapshots.length, inserted, updated: 0 };
+  const insert = db.db.prepare("INSERT OR IGNORE INTO source_snapshots (id,source_url,kind,captured_at,raw_json,user_email) VALUES (?,?,?,?,?,?)");
+  let inserted = 0;
+  for (const item of snapshots) {
+    const raw = JSON.stringify(item.raw);
+    const id = createHash("sha256").update(`${item.source_url}|${item.captured_at}|${raw}`).digest("hex");
+    inserted += Number(insert.run(id, item.source_url, item.kind ?? "unknown", item.captured_at, raw, userEmail).changes);
   }
+  return { received: snapshots.length, inserted, updated: 0 };
 }
 
 export async function ingestOfficialMetrics(db, payload) {
   const userEmail = db.userEmail ?? null;
-  if (db.type === "sqlite") {
-    const insert = db.db.prepare("INSERT INTO official_metrics (captured_at,label,value,source_url,user_email) VALUES (?,?,?,?,?)");
-    db.db.exec("BEGIN");
-    try {
-      if (userEmail) {
-        db.db.prepare("DELETE FROM official_metrics WHERE user_email = ?").run(userEmail);
-      } else {
-        db.db.prepare("DELETE FROM official_metrics WHERE user_email IS NULL").run();
-      }
-      for (const metric of payload.metrics ?? []) {
-        if (metric.label && metric.value) insert.run(payload.captured_at, metric.label, metric.value, payload.source_url, userEmail);
-      }
-      db.db.exec("COMMIT");
-    } catch (error) {
-      db.db.exec("ROLLBACK");
-      throw error;
-    }
-    return { received: payload.metrics?.length ?? 0 };
-  } else {
-    const supabase = db.client;
-    let deleteQuery = supabase.from("official_metrics").delete();
+  const insert = db.db.prepare("INSERT INTO official_metrics (captured_at,label,value,source_url,user_email) VALUES (?,?,?,?,?)");
+  db.db.exec("BEGIN");
+  try {
     if (userEmail) {
-      deleteQuery = deleteQuery.eq("user_email", userEmail);
+      db.db.prepare("DELETE FROM official_metrics WHERE user_email = ?").run(userEmail);
     } else {
-      deleteQuery = deleteQuery.is("user_email", null);
+      db.db.prepare("DELETE FROM official_metrics WHERE user_email IS NULL").run();
     }
-    check(await deleteQuery);
-    const metricsToInsert = (payload.metrics ?? [])
-      .filter(m => m.label && m.value)
-      .map(m => ({
-        captured_at: payload.captured_at,
-        label: m.label,
-        value: m.value,
-        source_url: payload.source_url,
-        user_email: userEmail
-      }));
-    if (metricsToInsert.length) {
-      await supabase.from("official_metrics").insert(metricsToInsert);
+    for (const metric of payload.metrics ?? []) {
+      if (metric.label && metric.value) insert.run(payload.captured_at, metric.label, metric.value, payload.source_url, userEmail);
     }
-    return { received: payload.metrics?.length ?? 0 };
+    db.db.exec("COMMIT");
+  } catch (error) {
+    db.db.exec("ROLLBACK");
+    throw error;
   }
+  return { received: payload.metrics?.length ?? 0 };
 }
 
 export async function officialMetrics(db) {
   const userEmail = db.userEmail ?? null;
-  if (db.type === "sqlite") {
-    const query = userEmail
-      ? "SELECT label,value,captured_at,source_url FROM official_metrics WHERE user_email = ? ORDER BY id LIMIT 100"
-      : "SELECT label,value,captured_at,source_url FROM official_metrics WHERE user_email IS NULL ORDER BY id LIMIT 100";
-    return userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
-  } else {
-    let query = db.client
-      .from("official_metrics")
-      .select("label,value,captured_at,source_url")
-      .order("id", { ascending: true })
-      .limit(100);
-    if (userEmail) {
-      query = query.eq("user_email", userEmail);
-    } else {
-      query = query.is("user_email", null);
-    }
-    const { data } = check(await query);
-    return data || [];
-  }
+  const query = userEmail
+    ? "SELECT label,value,captured_at,source_url FROM official_metrics WHERE user_email = ? ORDER BY id LIMIT 100"
+    : "SELECT label,value,captured_at,source_url FROM official_metrics WHERE user_email IS NULL ORDER BY id LIMIT 100";
+  return userEmail ? db.db.prepare(query).all(userEmail) : db.db.prepare(query).all();
 }
 
 export async function ingestOfficialSections(db, payload) {

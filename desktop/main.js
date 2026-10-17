@@ -20,15 +20,11 @@ function loadCommunityConfig() {
   try {
     const file = JSON.parse(readFileSync(join(import.meta.dirname, "community-config.json"), "utf8"));
     return {
-      apiUrl: process.env.COMMUNITY_API_URL || file.apiUrl,
-      supabaseUrl: process.env.COMMUNITY_SUPABASE_URL || file.supabaseUrl,
-      publishableKey: process.env.COMMUNITY_SUPABASE_PUBLISHABLE_KEY || file.publishableKey
+      apiUrl: process.env.COMMUNITY_API_URL || file.apiUrl
     };
   } catch {
     return {
-      apiUrl: process.env.COMMUNITY_API_URL,
-      supabaseUrl: process.env.COMMUNITY_SUPABASE_URL,
-      publishableKey: process.env.COMMUNITY_SUPABASE_PUBLISHABLE_KEY
+      apiUrl: process.env.COMMUNITY_API_URL
     };
   }
 }
@@ -612,9 +608,7 @@ app.whenReady().then(() => {
   loadUserConfig();
 
   communityAuth = createCommunityAuth({
-    url: communityConfig.supabaseUrl,
-    publishableKey: communityConfig.publishableKey && !communityConfig.publishableKey.startsWith("COLE_AQUI")
-      ? communityConfig.publishableKey : null,
+    apiUrl: communityConfig.apiUrl,
     storage: createCommunityStorage()
   });
   communityState.configured = !!communityAuth;
@@ -622,17 +616,13 @@ app.whenReady().then(() => {
   communityState.officialEmail = userConfig.userEmail || null;
   communityState.pendingEmail = userConfig.communityPendingEmail || null;
   if (communityAuth) {
-    communityAuth.auth.onAuthStateChange((_event, session) => {
-      const user = session?.user;
-      communityState.email = user?.email ?? communityState.pendingEmail ?? null;
-      communityState.emailConfirmed = !!user?.email_confirmed_at;
-      if (user?.email && user.email === communityState.pendingEmail) {
-        communityState.pendingEmail = null;
-        userConfig.communityPendingEmail = null;
-        saveUserConfig();
+    communityAuth.getSession().then(session => {
+      if (session) {
+        communityState.email = session.email ?? communityState.pendingEmail ?? null;
+        communityState.emailConfirmed = !!session.email_confirmed;
+        if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
       }
-      if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
-    });
+    }).catch(() => {});
   }
 
   const db = openDatabase(join(app.getPath("userData"), "dbd_tracker.sqlite3"));
@@ -709,56 +699,19 @@ ipcMain.handle("community-status", async () => {
   loadUserConfig();
   communityState.officialEmail = userConfig.userEmail || null;
   if (communityAuth) {
-    const { data } = await communityAuth.auth.getSession();
-    const user = data.session?.user;
-    communityState.email = user?.email ?? communityState.pendingEmail ?? null;
-    communityState.emailConfirmed = !!user?.email_confirmed_at;
+    const session = await communityAuth.getSession();
+    communityState.email = session?.email ?? communityState.pendingEmail ?? null;
+    communityState.emailConfirmed = !!session?.email_confirmed;
   }
   return communityState;
 });
 ipcMain.handle("community-stats", async () => {
-  if (!communityAuth) throw new Error("Community Supabase is not configured");
-  const [charactersRes, mapsRes, killersRes, perksRes] = await Promise.all([
-    communityAuth.from("public_character_stats").select("role, character_id, match_count"),
-    communityAuth.from("public_map_stats").select("role, map_id, match_count"),
-    communityAuth.from("public_killer_stats").select("killer_id, match_count, average_kills"),
-    communityAuth.from("public_perk_stats").select("role, perk_id, usage_count")
-  ]);
-  for (const result of [charactersRes, mapsRes, killersRes, perksRes]) {
-    if (result.error) throw result.error;
-  }
-  const aggregate = (rows, key, countKey = "match_count") => {
-    const groups = new Map();
-    for (const row of rows || []) {
-      const value = row[key];
-      if (!value) continue;
-      groups.set(value, (groups.get(value) || 0) + Number(row[countKey] || 0));
-    }
-    const total = [...groups.values()].reduce((sum, value) => sum + value, 0);
-    return [...groups].map(([value, count]) => ({ value, count, pct: total ? Math.round(count * 1000 / total) / 10 : 0 }))
-      .sort((a, b) => b.count - a.count);
-  };
-  const characterRows = charactersRes.data || [];
-  const mapRows = mapsRes.data || [];
-  const perkRows = perksRes.data || [];
-  return {
-    characters: {
-      survivor: aggregate(characterRows.filter(row => row.role === "survivor"), "character_id"),
-      killer: aggregate(characterRows.filter(row => row.role === "killer"), "character_id")
-    },
-    maps: aggregate(mapRows, "map_id"),
-    killers: (killersRes.data || []).filter(row => row.killer_id).map(row => ({
-      killer: row.killer_id, count: Number(row.match_count || 0), average_kills: row.average_kills
-    })).sort((a, b) => b.count - a.count),
-    perks: {
-      survivor: aggregate(perkRows.filter(row => row.role === "survivor"), "perk_id", "usage_count"),
-      killer: aggregate(perkRows.filter(row => row.role === "killer"), "perk_id", "usage_count")
-    }
-  };
+  if (!communityAuth) throw new Error("Community API is not configured");
+  return await communityAuth.fetchStats();
 });
 ipcMain.handle("set-community-opt-in", async (_, enabled) => {
   if (enabled) {
-    if (!communityAuth) throw new Error("Community Supabase is not configured");
+    if (!communityAuth) throw new Error("Community API is not configured");
     await ensureAnonymousCommunitySession(communityAuth);
   }
   userConfig.communityOptIn = !!enabled;
@@ -768,7 +721,7 @@ ipcMain.handle("set-community-opt-in", async (_, enabled) => {
   return communityState;
 });
 ipcMain.handle("link-community-email", async (_, email) => {
-  if (!communityAuth) throw new Error("Community Supabase is not configured");
+  if (!communityAuth) throw new Error("Community API is not configured");
   const requestedEmail = String(email || "").trim();
   if (!requestedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(requestedEmail)) {
     throw new Error("Informe um e-mail válido.");
@@ -776,26 +729,23 @@ ipcMain.handle("link-community-email", async (_, email) => {
   communityState.pendingEmail = requestedEmail;
   communityState.email = requestedEmail;
   communityState.emailConfirmed = false;
-  communityState.message = "Enviando confirmação para o e-mail informado...";
+  communityState.message = "Vinculando e-mail para recuperação de conta...";
   if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
   try {
-    await ensureAnonymousCommunitySession(communityAuth);
-    const session = await communityAuth.auth.getSession();
-    const linked = await linkRecoveryEmailDirect({
-      apiUrl: communityConfig.apiUrl,
-      accessToken: session.data.session?.access_token,
-      email: requestedEmail
-    });
+    const linked = await communityAuth.linkEmail(requestedEmail);
     communityState.email = linked.email ?? requestedEmail;
     communityState.emailConfirmed = !!linked.email_confirmed;
-    userConfig.communityPendingEmail = communityState.email;
+    communityState.pendingEmail = null;
+    userConfig.communityPendingEmail = null;
     saveUserConfig();
-    communityState.message = "E-mail vinculado. Verifique sua caixa de entrada para confirmar a recuperação.";
+    communityState.message = "E-mail vinculado para recuperação de conta.";
+    if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
     return communityState;
   } catch (error) {
     communityState.pendingEmail = null;
     communityState.email = null;
     communityState.message = `Não foi possível vincular o e-mail: ${error.message}`;
+    if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
     throw error;
   }
 });

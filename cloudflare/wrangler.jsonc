@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dbd-tracker-community",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "dbd-tracker-community",
+      "database_id": "YOUR_D1_DATABASE_ID_HERE"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/30 * * * *"]
+  }
+}

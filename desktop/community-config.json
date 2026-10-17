@@ -1,5 +1,3 @@
 {
-  "apiUrl": "https://gcaecubsnkzslrqmjxhx.supabase.co/functions/v1/community-ingest",
-  "supabaseUrl": "https://gcaecubsnkzslrqmjxhx.supabase.co",
-  "publishableKey": "sb_publishable_p6pl9JkiRrJ34pga04Fj9w_VQXOHwo4"
+  "apiUrl": "https://dbd-tracker-community.workers.dev"
 }

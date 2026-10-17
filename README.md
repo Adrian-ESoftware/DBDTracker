@@ -57,10 +57,13 @@ O instalador será criado pelo electron-builder na pasta `desktop/dist/`.
 
 ## Dados da comunidade
 
-O SQLite local e a fonte dos dados pessoais do jogador. A contribuicao comunitaria deve ser opt-in e enviar somente partidas normalizadas para `supabase/functions/community-ingest`.
+O SQLite local é a fonte dos dados pessoais do jogador. A contribuição comunitária é opt-in e envia somente partidas normalizadas para a API em Cloudflare Workers (`cloudflare/`).
 
-O Supabase usa uma sessao anonima invisivel para controlar a contribuicao. E-mail e senha sao opcionais e servem apenas para transformar essa sessao em um backup recuperavel em outro computador; perder o SQLite antes de vincular um e-mail impede a recuperacao.
+O backend utiliza **Cloudflare D1 (SQLite serverless)**:
+- Sessão anônima invisível gerenciada pelo Worker e armazenada localmente em `community-session.json`.
+- Vinculação opcional de e-mail de recuperação diretamente pela interface do overlay.
+- Ingestão atômica em lotes via `db.batch()` e deduplicação automática por hash de partida.
+- Estatísticas públicas com Edge Caching servidas em poucos milissegundos para o overlay.
 
-O desktop nao acessa o Supabase diretamente e nenhum `service_role` deve ser colocado no `.env` ou no executavel. A Edge Function valida o JWT do usuario, remove payloads crus e dados de conta, deduplica partidas e atualiza agregacoes publicas com um minimo de 20 partidas.
+Para configurar e implantar o backend comunitário, consulte [`cloudflare/README.md`](file:///home/rapid/workspace/rapidmesck/DBDTracker/cloudflare/README.md).
 
-Para configurar o backend, aplique `desktop/supabase_schema.sql` em um projeto Supabase e configure `DBD_PUBLISHABLE_KEY` e `DBD_SERVICE_ROLE_KEY` apenas nos secrets da Function. A URL do Supabase é fornecida automaticamente. A chave de service role nunca deve ser configurada no Electron.

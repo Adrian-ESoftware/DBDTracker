@@ -307,8 +307,8 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
     }
     const matches = findMatches(payload);
     if (matches.length) {
-      await ingestMatches(db, matches);
-      if (typeof onMatches === "function") {
+      const ingestResult = await ingestMatches(db, matches);
+      if (typeof onMatches === "function" && (ingestResult?.inserted > 0 || ingestResult?.updated > 0)) {
         await onMatches(matches);
       }
     }

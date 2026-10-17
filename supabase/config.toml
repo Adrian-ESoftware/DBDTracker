@@ -1,6 +1,0 @@
-# Supabase project configuration for DBD Tracker.
-# This file contains only the public project reference, never secrets.
-project_id = "gcaecubsnkzslrqmjxhx"
-
-[functions.community-ingest]
-verify_jwt = true

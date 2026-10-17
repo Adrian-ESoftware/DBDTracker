@@ -1,63 +1,220 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
 
 const MAX_MATCHES_PER_UPLOAD = 100;
-const cleanText = value => typeof value === "string" && value.trim() ? value.trim().slice(0, 160) : null;
-const cleanNumber = (value, min, max) => Number.isFinite(value) && value >= min && value <= max ? value : null;
-const cleanNames = value => Array.isArray(value)
-  ? value.filter(item => typeof item === "string" && item.trim()).map(item => item.trim().slice(0, 160)).slice(0, 8)
-  : [];
-const cleanParticipants = value => Array.isArray(value)
-  ? value.slice(0, 5).map(player => ({
-    character_id: cleanText(player?.character_id ?? player?.character),
-    role: ["survivor", "killer"].includes(player?.role) ? player.role : null,
-    result: cleanText(player?.result),
-    perks: cleanNames(player?.perks)
-  }))
-  : [];
+const cleanText = value => (typeof value === "string" && value.trim() ? value.trim().slice(0, 160) : null);
+const cleanNumber = (value, min, max) => (Number.isFinite(value) && value >= min && value <= max ? value : null);
+const cleanNames = value =>
+  Array.isArray(value)
+    ? value
+        .filter(item => typeof item === "string" && item.trim())
+        .map(item => item.trim().slice(0, 160))
+        .slice(0, 8)
+    : [];
 
-export function createCommunityAuth({ url, publishableKey, storage }) {
-  if (!url || !publishableKey) return null;
-  return createClient(url, publishableKey, {
-    auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false, storage }
-  });
+const cleanParticipants = value =>
+  Array.isArray(value)
+    ? value.slice(0, 5).map(player => ({
+        character_id: cleanText(player?.character_id ?? player?.character),
+        role: ["survivor", "killer"].includes(player?.role) ? player.role : null,
+        result: cleanText(player?.result),
+        perks: cleanNames(player?.perks)
+      }))
+    : [];
+
+function resolveBaseUrl(url) {
+  if (!url) return "";
+  let base = String(url).trim().replace(/\/+$/, "");
+  base = base.replace(/\/(api\/community-ingest|functions\/v1\/community-ingest)$/, "");
+  return base.replace(/\/+$/, "");
+}
+
+export class CommunityClient {
+  constructor({ apiUrl, storage, fetchImpl = fetch }) {
+    this.baseUrl = resolveBaseUrl(apiUrl);
+    this.storage = storage;
+    this.fetch = fetchImpl;
+  }
+
+  getStoredSession() {
+    if (!this.storage) return null;
+    try {
+      const raw = this.storage.getItem("community_session");
+      if (!raw) return null;
+      return typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch {
+      return null;
+    }
+  }
+
+  saveStoredSession(session) {
+    if (!this.storage) return;
+    try {
+      if (session) {
+        this.storage.setItem("community_session", JSON.stringify(session));
+      } else {
+        this.storage.removeItem("community_session");
+      }
+    } catch {}
+  }
+
+  async getSession() {
+    const existing = this.getStoredSession();
+    if (!existing?.token) return null;
+    return existing;
+  }
+
+  async ensureSession() {
+    if (!this.baseUrl) throw new Error("Community API is not configured");
+
+    const existing = this.getStoredSession();
+    if (existing?.token) {
+      try {
+        const res = await this.fetch(`${this.baseUrl}/api/auth/session`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${existing.token}`,
+            "Content-Type": "application/json"
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const session = {
+            token: data.token || existing.token,
+            access_token: data.token || existing.token,
+            user_id: data.user_id || existing.user_id,
+            email: data.email ?? existing.email ?? null,
+            email_confirmed: !!data.email_confirmed,
+            user: {
+              id: data.user_id || existing.user_id,
+              email: data.email ?? existing.email ?? null,
+              email_confirmed_at: data.email_confirmed ? new Date().toISOString() : null
+            }
+          };
+          this.saveStoredSession(session);
+          return session;
+        }
+      } catch (err) {
+        console.warn("[Community] Falha ao validar sessão existente na nuvem:", err.message);
+        // Em caso de falha transitória de rede, reutiliza a sessão local
+        return existing;
+      }
+    }
+
+    // Cria nova sessão anônima
+    const res = await this.fetch(`${this.baseUrl}/api/auth/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    });
+
+    let data = {};
+    try {
+      data = await res.json();
+    } catch {}
+
+    if (!res.ok || !data.token) {
+      throw new Error(`Falha ao registrar sessão anônima: ${data.error || res.status}`);
+    }
+
+    const newSession = {
+      token: data.token,
+      access_token: data.token,
+      user_id: data.user_id,
+      email: data.email ?? null,
+      email_confirmed: !!data.email_confirmed,
+      user: {
+        id: data.user_id,
+        email: data.email ?? null,
+        email_confirmed_at: data.email_confirmed ? new Date().toISOString() : null
+      }
+    };
+    this.saveStoredSession(newSession);
+    return newSession;
+  }
+
+  async linkEmail(email) {
+    const session = await this.ensureSession();
+    const result = await linkRecoveryEmailDirect({
+      apiUrl: this.baseUrl,
+      accessToken: session.token,
+      email,
+      fetchImpl: this.fetch
+    });
+
+    session.email = result.email || email;
+    session.email_confirmed = !!result.email_confirmed;
+    if (session.user) {
+      session.user.email = session.email;
+      session.user.email_confirmed_at = session.email_confirmed ? new Date().toISOString() : null;
+    }
+    this.saveStoredSession(session);
+    return result;
+  }
+
+  async fetchStats() {
+    if (!this.baseUrl) throw new Error("Community API is not configured");
+    return fetchCommunityStats({ apiUrl: this.baseUrl, fetchImpl: this.fetch });
+  }
+
+  async uploadMatches(matches, metadata = {}) {
+    const session = await this.ensureSession();
+    return uploadCommunitySubmission({
+      apiUrl: `${this.baseUrl}/api/community-ingest`,
+      accessToken: session.token,
+      matches,
+      metadata,
+      fetchImpl: this.fetch
+    });
+  }
+}
+
+export function createCommunityAuth({ url, apiUrl, storage, fetchImpl = fetch }) {
+  const targetUrl = apiUrl || url;
+  if (!targetUrl) return null;
+  return new CommunityClient({ apiUrl: targetUrl, storage, fetchImpl });
 }
 
 export async function ensureAnonymousCommunitySession(client) {
   if (!client) throw new Error("community auth is not configured");
-  const { data: existing, error: sessionError } = await client.auth.getSession();
-  if (sessionError) throw sessionError;
-  if (existing.session) {
-    // A troca do projeto Supabase pode deixar uma sessão antiga persistida.
-    // Valida o token no projeto atual antes de reutilizá-lo.
-    const { error: userError } = await client.auth.getUser(existing.session.access_token);
-    if (!userError) return existing.session;
-    await client.auth.signOut();
+  if (typeof client.ensureSession === "function") {
+    return client.ensureSession();
   }
-  const { data, error } = await client.auth.signInAnonymously();
-  if (error) throw error;
-  return data.session;
+  throw new Error("unsupported community client");
 }
 
 export async function linkRecoveryEmail(client, email) {
   if (!client || !email) {
     throw new Error("a valid email is required");
   }
-  const { data, error } = await client.auth.updateUser({ email });
-  if (error) throw error;
-  return data.user;
+  if (typeof client.linkEmail === "function") {
+    return client.linkEmail(email);
+  }
+  throw new Error("unsupported community client");
 }
 
 export async function linkRecoveryEmailDirect({ apiUrl, accessToken, email, fetchImpl = fetch }) {
-  if (!apiUrl || !accessToken || !email) throw new Error("community API, access token and email are required");
-  const response = await fetchImpl(apiUrl, {
+  if (!apiUrl || !accessToken || !email) {
+    throw new Error("community API, access token and email are required");
+  }
+  const base = resolveBaseUrl(apiUrl);
+  const endpoint = `${base}/api/auth/link-email`;
+
+  const response = await fetchImpl(endpoint, {
     method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "link_email", email })
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ email })
   });
+
   let body = {};
-  try { body = await response.json(); } catch {}
-  if (!response.ok) throw new Error(`Falha ao vincular e-mail: ${body.error || response.status}`);
+  try {
+    body = await response.json();
+  } catch {}
+
+  if (!response.ok) {
+    throw new Error(`Falha ao vincular e-mail: ${body.error || response.status}`);
+  }
   return body;
 }
 
@@ -71,7 +228,7 @@ export function sanitizeCommunityMatches(matches, metadata = {}) {
     if (!match?.played_at || !["survivor", "killer"].includes(match.role)) {
       throw new TypeError("each match requires played_at and a valid role");
     }
-    const normalized = {
+    return {
       official_match_id: cleanText(match.source_id),
       played_at: new Date(match.played_at).toISOString(),
       role: match.role,
@@ -93,7 +250,6 @@ export function sanitizeCommunityMatches(matches, metadata = {}) {
       participants: cleanParticipants(match.participants),
       source: "official_stats"
     };
-    return normalized;
   });
 }
 
@@ -107,16 +263,49 @@ export function createCommunitySubmission(matches, metadata = {}) {
 export async function uploadCommunitySubmission({ apiUrl, accessToken, matches, metadata, fetchImpl = fetch }) {
   if (!apiUrl || !accessToken) throw new Error("community API and app access token are required");
   const submission = createCommunitySubmission(matches, metadata);
-  const response = await fetchImpl(apiUrl, {
+  const base = resolveBaseUrl(apiUrl);
+  const endpoint = apiUrl.includes("/api/community-ingest") || apiUrl.includes("/functions/v1/community-ingest")
+    ? apiUrl
+    : `${base}/api/community-ingest`;
+
+  const response = await fetchImpl(endpoint, {
     method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    },
     body: JSON.stringify(submission)
   });
+
   let body = {};
-  try { body = await response.json(); } catch {}
+  try {
+    body = await response.json();
+  } catch {}
+
   if (!response.ok) {
     const reason = body.error || body.detail || `HTTP ${response.status}`;
     throw new Error(`Falha na sincronização: ${reason} (${response.status})`);
+  }
+  return body;
+}
+
+export async function fetchCommunityStats({ apiUrl, fetchImpl = fetch }) {
+  if (!apiUrl) throw new Error("community API is required");
+  const base = resolveBaseUrl(apiUrl);
+  const endpoint = `${base}/api/community-stats`;
+
+  const response = await fetchImpl(endpoint, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" }
+  });
+
+  let body = {};
+  try {
+    body = await response.json();
+  } catch {}
+
+  if (!response.ok) {
+    throw new Error(`Falha ao obter estatísticas da comunidade: ${body.error || response.status}`);
   }
   return body;
 }
