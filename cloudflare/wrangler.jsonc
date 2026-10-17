@@ -8,7 +8,7 @@
     {
       "binding": "DB",
       "database_name": "dbd-tracker-community",
-      "database_id": "YOUR_D1_DATABASE_ID_HERE"
+      "database_id": "c0715b5d-ecfe-436e-9e2c-b4ac79c05ea4"
     }
   ],
   "triggers": {
