@@ -618,6 +618,7 @@ dependencies = [
  "rdev",
  "rten",
  "serde_json",
+ "winapi",
  "xcap",
 ]
 

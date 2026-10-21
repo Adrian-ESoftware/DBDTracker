@@ -1,4 +1,6 @@
-// main.rs — DBD Map Checker
+// main.rs — DBD Map Checker [WIP]
+// Status: Work In Progress (WIP) — Funcionalidade temporariamente desativada no software
+// enquanto o catálogo de mapas está sendo completado.
 // Escuta globalmente a tecla TAB: captura screenshot após 100ms e roda OCR
 // em thread separada para não travar o listener de teclado.
 
@@ -9,8 +11,6 @@
 
 mod map_detector;
 use map_detector::{DbdMapDetector, MapCandidate, MapCatalog};
-
-use rdev::{Event, EventType, Key, listen};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::env;
@@ -779,95 +779,126 @@ fn capture_screenshot() -> anyhow::Result<(image::DynamicImage, Duration, Captur
     ))
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────────
-#[cfg(any())]
-fn legacy_dev_main() {
-    println!("🔍 DBD Map Checker iniciado");
-    println!("   Pressione TAB no jogo para detectar o mapa.");
-    println!("   Pressione ESC para sair.\n");
+// ── Listener de teclado global ───────────────────────────────────────────────
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hotkey {
+    Tab,
+    Escape,
+}
 
-    // Força inicialização do OCR antes do primeiro TAB (roda na main thread)
-    let _ = get_detector();
-    let monitor = get_primary_monitor();
-    let _ = get_capture_worker();
-    println!(
-        "   Monitor primario: {} ({}x{}).",
-        monitor.name, monitor.width, monitor.height,
-    );
-    println!("   ✓ OCR carregado e pronto.\n");
-
-    // ── Loop de eventos de teclado ────────────────────────────────────────────
-    let callback = move |event: Event| {
-        if let EventType::KeyPress(key) = event.event_type {
+#[cfg(not(windows))]
+fn listen_hotkeys<F>(mut callback: F) -> Result<(), String>
+where
+    F: FnMut(Hotkey) + Send + 'static,
+{
+    rdev::listen(move |event| {
+        if let rdev::EventType::KeyPress(key) = event.event_type {
             match key {
-                Key::Tab => {
-                    // Ignora se já estiver processando um TAB anterior
-                    let Some(guard) = ProcessingGuard::try_acquire() else {
-                        return;
-                    };
-
-                    // Dispara processamento em thread separada — não bloqueia o listener
-                    thread::spawn(|| {
-                        let _guard = guard;
-
-                        // Aguarda 50ms para a animação do tab screen terminar
-                        thread::sleep(Duration::from_millis(50));
-
-                        // Captura o screenshot com o mapa visível
-                        let (screenshot, capture_time, capture_source) = match capture_screenshot()
-                        {
-                            Ok(result) => result,
-                            Err(e) => {
-                                eprintln!("Erro ao capturar screenshot: {e}\n");
-                                return;
-                            }
-                        };
-                        println!(
-                            "\n📸 Screenshot capturado ({w}x{h}) — rodando OCR...",
-                            w = screenshot.width(),
-                            h = screenshot.height(),
-                        );
-                        println!("Captura: {} em {capture_time:.2?}", capture_source.label());
-
-                        // Roda OCR
-                        let detector = get_detector();
-                        let ocr_started_at = Instant::now();
-                        match detector.detect_map(&screenshot) {
-                            Ok(Some(r)) => {
-                                let ocr_time = ocr_started_at.elapsed();
-                                println!(
-                                    "🗺️  Mapa: {name}  (confiança: {conf:.0}%)",
-                                    name = r.map_name,
-                                    conf = r.confidence * 100.0,
-                                );
-                                println!("    OCR: {ocr_time:.2?}");
-                                println!("    OCR bruto: {}", r.raw_ocr_text);
-                                println!("→ Mapa confirmado: {}\n", r.map_name);
-                            }
-                            Ok(None) => println!("⚠️  Mapa não identificado\n"),
-                            Err(e) => eprintln!("❌ Erro OCR: {e}\n"),
-                        }
-
-                        println!("{}", "─".repeat(55));
-                    });
-                }
-                Key::Escape => {
-                    println!("\n👋 Encerrando DBD Map Checker...");
-                    std::process::exit(0);
-                }
+                rdev::Key::Tab => callback(Hotkey::Tab),
+                rdev::Key::Escape => callback(Hotkey::Escape),
                 _ => {}
             }
         }
+    })
+    .map_err(|e| format!("{e:?}"))
+}
+
+#[cfg(windows)]
+mod windows_listener {
+    use super::Hotkey;
+    use std::ptr::null_mut;
+    use std::sync::Mutex;
+    use winapi::shared::minwindef::{LPARAM, LRESULT, WPARAM};
+    use winapi::shared::windef::HHOOK;
+    use winapi::um::winuser::{
+        CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
+        UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, VK_ESCAPE, VK_TAB,
     };
 
-    if let Err(e) = listen(callback) {
-        eprintln!("❌ Erro ao iniciar listener de teclado global: {e:?}");
-        eprintln!("   Windows: verifique se o programa não está bloqueado pelo antivírus.");
-        eprintln!("   Linux:   talvez precise rodar com sudo para capturar eventos globais.");
+    struct HookHandle(HHOOK);
+    unsafe impl Send for HookHandle {}
+
+    static HOOK: Mutex<Option<HookHandle>> = Mutex::new(None);
+    static CALLBACK: Mutex<Option<Box<dyn FnMut(Hotkey) + Send>>> = Mutex::new(None);
+
+    // Hook de baixo nível que apenas verifica se a tecla TAB ou ESC foi pressionada.
+    // NUNCA chama ToUnicode, ToUnicodeEx, ToAscii ou clear_keyboard_buffer, preservando
+    // 100% o estado de dead keys (acentos como ~, ´, `, ^) no teclado ABNT / ABNT2 no Windows.
+    unsafe extern "system" fn low_level_keyboard_proc(
+        code: i32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if code >= 0 && wparam as u32 == WM_KEYDOWN {
+            let info = unsafe { *(lparam as *const KBDLLHOOKSTRUCT) };
+            let vk = info.vkCode as i32;
+            if vk == VK_TAB {
+                if let Ok(mut lock) = CALLBACK.lock() {
+                    if let Some(cb) = lock.as_mut() {
+                        cb(Hotkey::Tab);
+                    }
+                }
+            } else if vk == VK_ESCAPE {
+                if let Ok(mut lock) = CALLBACK.lock() {
+                    if let Some(cb) = lock.as_mut() {
+                        cb(Hotkey::Escape);
+                    }
+                }
+            }
+        }
+        let hook_handle = HOOK
+            .lock()
+            .ok()
+            .and_then(|h| h.as_ref().map(|hh| hh.0))
+            .unwrap_or(null_mut());
+        unsafe { CallNextHookEx(hook_handle, code, wparam, lparam) }
+    }
+
+    pub fn listen_hotkeys<F>(callback: F) -> Result<(), String>
+    where
+        F: FnMut(Hotkey) + Send + 'static,
+    {
+        *CALLBACK.lock().map_err(|e| e.to_string())? = Some(Box::new(callback));
+        let hook = unsafe {
+            SetWindowsHookExW(
+                WH_KEYBOARD_LL,
+                Some(low_level_keyboard_proc),
+                null_mut(),
+                0,
+            )
+        };
+        if hook.is_null() {
+            let err = unsafe { winapi::um::errhandlingapi::GetLastError() };
+            return Err(format!("SetWindowsHookExW falhou com erro {err}"));
+        }
+        *HOOK.lock().map_err(|e| e.to_string())? = Some(HookHandle(hook));
+
+        let mut msg: MSG = unsafe { std::mem::zeroed() };
+        while unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } > 0 {
+            unsafe {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+
+        if let Ok(mut lock) = HOOK.lock() {
+            if let Some(h) = lock.take() {
+                unsafe {
+                    UnhookWindowsHookEx(h.0);
+                }
+            }
+        }
+        if let Ok(mut lock) = CALLBACK.lock() {
+            *lock = None;
+        }
+        Ok(())
     }
 }
 
-// ── Teste de integração (modo offline com screenshot salvo) ───────────────────
+#[cfg(windows)]
+use windows_listener::listen_hotkeys;
+
+// ── Entry point ───────────────────────────────────────────────────────────────
 fn main() {
     let cli = CliConfig::from_args();
     let output = cli.output;
@@ -891,65 +922,59 @@ fn main() {
     debug_assert_eq!(detector.map_count(), catalog.status.count);
     output.emit_ready(monitor, &catalog.status);
 
-    let callback = move |event: Event| {
-        if let EventType::KeyPress(key) = event.event_type {
-            match key {
-                Key::Tab => {
-                    let Some(guard) = ProcessingGuard::try_acquire() else {
-                        return;
+    let callback = move |hotkey: Hotkey| {
+        match hotkey {
+            Hotkey::Tab => {
+                let Some(guard) = ProcessingGuard::try_acquire() else {
+                    return;
+                };
+
+                let output = output;
+                thread::spawn(move || {
+                    let _guard = guard;
+                    thread::sleep(Duration::from_millis(50));
+
+                    let (screenshot, capture_time, capture_source) = match capture_screenshot() {
+                        Ok(result) => result,
+                        Err(e) => {
+                            output.emit_capture_error(&e.to_string());
+                            return;
+                        }
                     };
 
-                    let output = output;
-                    thread::spawn(move || {
-                        let _guard = guard;
-                        thread::sleep(Duration::from_millis(50));
+                    let capture = CaptureMetrics {
+                        source: capture_source,
+                        time: capture_time,
+                        width: screenshot.width(),
+                        height: screenshot.height(),
+                    };
 
-                        let (screenshot, capture_time, capture_source) = match capture_screenshot()
-                        {
-                            Ok(result) => result,
-                            Err(e) => {
-                                output.emit_capture_error(&e.to_string());
-                                return;
+                    let detector = get_detector();
+                    let ocr_started_at = Instant::now();
+                    match detector.detect_map_detailed(&screenshot) {
+                        Ok(detection) => match &detection.result {
+                            Some(result) => {
+                                output.emit_map_detected(result, &capture, ocr_started_at.elapsed())
                             }
-                        };
-
-                        let capture = CaptureMetrics {
-                            source: capture_source,
-                            time: capture_time,
-                            width: screenshot.width(),
-                            height: screenshot.height(),
-                        };
-
-                        let detector = get_detector();
-                        let ocr_started_at = Instant::now();
-                        match detector.detect_map_detailed(&screenshot) {
-                            Ok(detection) => match &detection.result {
-                                Some(result) => output.emit_map_detected(
-                                    result,
-                                    &capture,
-                                    ocr_started_at.elapsed(),
-                                ),
-                                None => output.emit_map_not_found(
-                                    &capture,
-                                    ocr_started_at.elapsed(),
-                                    &detection.diagnostic,
-                                ),
-                            },
-                            Err(e) => output.emit_ocr_error(&e.to_string(), &capture),
-                        }
-                    });
-                }
-                Key::Escape if output.is_dev() => {
-                    println!("\nEncerrando DBD Map Checker...");
-                    process::exit(0);
-                }
-                _ => {}
+                            None => output.emit_map_not_found(
+                                &capture,
+                                ocr_started_at.elapsed(),
+                                &detection.diagnostic,
+                            ),
+                        },
+                        Err(e) => output.emit_ocr_error(&e.to_string(), &capture),
+                    }
+                });
             }
+            Hotkey::Escape if output.is_dev() => {
+                println!("\nEncerrando DBD Map Checker...");
+                process::exit(0);
+            }
+            _ => {}
         }
     };
 
-    if let Err(e) = listen(callback) {
-        let message = format!("{e:?}");
+    if let Err(message) = listen_hotkeys(callback) {
         match output {
             OutputMode::Dev => {
                 eprintln!("Erro ao iniciar listener de teclado global: {message}");

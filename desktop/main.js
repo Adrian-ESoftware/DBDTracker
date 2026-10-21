@@ -105,9 +105,11 @@ let server;
 let collector;
 let tray;
 let isQuitting = false;
+// [WIP] Detector de mapas temporariamente desativado no software até termos o catálogo de todos os mapas
+const MAP_CHECK_WIP = true;
 let mapCheckProcess = null;
 let mapCheckBuffer = "";
-let mapCheckStatus = { status: "initializing", monitor: null };
+let mapCheckStatus = { status: "disabled", monitor: null, wip: true };
 let mapOverlayWindow = null;
 let communityAuth = null;
 let communityState = { configured: false, enabled: false, syncing: false, email: null, pendingEmail: null, officialEmail: null, emailConfirmed: false, message: "Contribuição desativada." };
@@ -117,7 +119,7 @@ let userConfig = {
   overlayCorner: "top-right",
   overlayOpacity: 70,
   overlaySize: 350,
-  mapCheckEnabled: true,
+  mapCheckEnabled: false, // [WIP] Desativado por padrão
   mapCheckLanguage: "pt-br",
   shortcutToggleOverlay: "CommandOrControl+Shift+F",
   shortcutToggleClicks: "CommandOrControl+Shift+X",
@@ -157,6 +159,10 @@ function loadUserConfig() {
     }
   } catch (err) {
     console.error("[Main] Error loading config:", err);
+  }
+  // [WIP] Garante que a detecção fique desativada enquanto estiver em desenvolvimento
+  if (MAP_CHECK_WIP) {
+    userConfig.mapCheckEnabled = false;
   }
 }
 
@@ -357,11 +363,11 @@ function stopMapCheck() {
 }
 
 function startMapCheck() {
-  if (userConfig.mapCheckEnabled === false) {
-    console.log("[Main] Map check is disabled in config.");
-    mapCheckStatus = { status: "disabled", monitor: null };
+  if (MAP_CHECK_WIP || userConfig.mapCheckEnabled === false) {
+    console.log("[Main] Map check is disabled (WIP - aguardando catálogo completo de mapas).");
+    mapCheckStatus = { status: "disabled", monitor: null, wip: true };
     if (window && !window.isDestroyed()) {
-      window.webContents.send("map-check-event", { type: "disabled" });
+      window.webContents.send("map-check-event", { type: "disabled", wip: true });
     }
     return;
   }
@@ -668,8 +674,15 @@ app.whenReady().then(() => {
     });
     // Inicia o coletor 2s após a janela aparecer para não travar a UI
     setTimeout(() => collector.start(), 2000);
-    // Inicia o detector de mapas
-    setTimeout(() => startMapCheck(), 1000);
+    // Inicia o detector de mapas (WIP: desativado no software até conclusão do catálogo)
+    if (!MAP_CHECK_WIP) {
+      setTimeout(() => startMapCheck(), 1000);
+    } else {
+      mapCheckStatus = { status: "disabled", monitor: null, wip: true };
+      if (window && !window.isDestroyed()) {
+        window.webContents.send("map-check-event", { type: "disabled", wip: true });
+      }
+    }
   };
 
   window.once("show", startServices);
@@ -778,6 +791,9 @@ ipcMain.handle("save-overlay-settings", (_, settings) => {
   const oldAlwaysOnTop = userConfig.alwaysOnTop !== false;
   const oldStartWithSystem = !!userConfig.startWithSystem;
 
+  if (MAP_CHECK_WIP) {
+    settings.mapCheckEnabled = false;
+  }
   userConfig = { ...userConfig, ...settings };
   saveUserConfig();
 
