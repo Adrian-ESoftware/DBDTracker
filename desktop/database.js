@@ -47,6 +47,20 @@ function isMoreOrEquallyComplete(incoming, existing) {
 
 export function cleanupDuplicates(db) {
   cleanupDuplicatesSqlite(db.db);
+  pruneSnapshotsSqlite(db.db);
+}
+
+function pruneSnapshotsSqlite(db) {
+  try {
+    db.exec(`
+      DELETE FROM source_snapshots
+      WHERE id NOT IN (
+        SELECT id FROM source_snapshots
+        ORDER BY captured_at DESC
+        LIMIT 10
+      )
+    `);
+  } catch {}
 }
 
 function cleanupDuplicatesSqlite(db) {
@@ -141,7 +155,7 @@ export function openDatabase(path) {
   if (path !== ":memory:") {
     try {
       localDb = new DatabaseSync(path);
-      localDb.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
+      localDb.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA cache_size=-4000; PRAGMA temp_store=FILE; PRAGMA mmap_size=0;");
       localDb.exec(`
         CREATE TABLE IF NOT EXISTS matches (
           id TEXT PRIMARY KEY, source_id TEXT, played_at TEXT NOT NULL, role TEXT NOT NULL,
@@ -250,9 +264,11 @@ export function openDatabase(path) {
         );
       `);
       cleanupDuplicatesSqlite(db);
+      pruneSnapshotsSqlite(db);
       return { type: "sqlite", db };
     }
     cleanupDuplicatesSqlite(localDb);
+    pruneSnapshotsSqlite(localDb);
     return { type: "sqlite", db: localDb };
   }
 }
@@ -330,13 +346,14 @@ export async function ingestMatches(db, matches) {
 
 export async function ingestSnapshots(db, snapshots) {
   const userEmail = db.userEmail ?? null;
-  const insert = db.db.prepare("INSERT OR IGNORE INTO source_snapshots (id,source_url,kind,captured_at,raw_json,user_email) VALUES (?,?,?,?,?,?)");
+  const insert = db.db.prepare("INSERT OR REPLACE INTO source_snapshots (id,source_url,kind,captured_at,raw_json,user_email) VALUES (?,?,?,?,?,?)");
   let inserted = 0;
   for (const item of snapshots) {
     const raw = JSON.stringify(item.raw);
-    const id = createHash("sha256").update(`${item.source_url}|${item.captured_at}|${raw}`).digest("hex");
+    const id = createHash("sha256").update(`${item.source_url}|${userEmail ?? ""}`).digest("hex");
     inserted += Number(insert.run(id, item.source_url, item.kind ?? "unknown", item.captured_at, raw, userEmail).changes);
   }
+  pruneSnapshotsSqlite(db.db);
   return { received: snapshots.length, inserted, updated: 0 };
 }
 
@@ -738,18 +755,17 @@ export async function matches(db, limit = 100) {
   const userEmail = db.userEmail ?? null;
   const images = await catalog(db);
   if (db.type === "sqlite") {
+    const cols = `m.id, m.source_id, m.played_at, m.role, m.character, m.map, m.map_realm, m.duration_sec, m.result, m.score, m.imported_at, m.user_email,
+                  l.perks_json AS l_perks_json, l.item AS l_item, l.addons_json AS l_addons_json, l.offering AS l_offering,
+                  k.killer AS k_killer, k.kills_count AS k_kills_count, k.perks_json AS k_perks_json, k.addons_json AS k_addons_json, k.offering AS k_offering`;
     const query = userEmail
-      ? `SELECT m.*,
-                l.perks_json AS l_perks_json, l.item AS l_item, l.addons_json AS l_addons_json, l.offering AS l_offering,
-                k.killer AS k_killer, k.kills_count AS k_kills_count, k.perks_json AS k_perks_json, k.addons_json AS k_addons_json, k.offering AS k_offering
+      ? `SELECT ${cols}
          FROM matches m
          LEFT JOIN loadouts l ON l.match_id = m.id
          LEFT JOIN killer_info k ON k.match_id = m.id
          WHERE m.user_email = ?
          ORDER BY m.played_at DESC LIMIT ?`
-      : `SELECT m.*,
-                l.perks_json AS l_perks_json, l.item AS l_item, l.addons_json AS l_addons_json, l.offering AS l_offering,
-                k.killer AS k_killer, k.kills_count AS k_kills_count, k.perks_json AS k_perks_json, k.addons_json AS k_addons_json, k.offering AS k_offering
+      : `SELECT ${cols}
          FROM matches m
          LEFT JOIN loadouts l ON l.match_id = m.id
          LEFT JOIN killer_info k ON k.match_id = m.id
@@ -770,14 +786,13 @@ export async function matches(db, limit = 100) {
         duration_sec: match.duration_sec,
         result: match.result,
         score: match.score,
-        raw_json: match.raw_json,
         imported_at: match.imported_at,
         user_email: match.user_email,
         character_image: images.characters.get(match.character),
         map_image: images.maps.get(match.map),
         loadout: { perks: parse(match.l_perks_json), item: match.l_item, addons: parse(match.l_addons_json), offering: match.l_offering },
         killer_info: hasKiller ? { killer: match.k_killer, kills_count: match.k_kills_count, perks: parse(match.k_perks_json), addons: parse(match.k_addons_json), offering: match.k_offering } : null,
-        participants: participants.map(p => ({ ...p, perks: parse(p.perks_json), addons: parse(p.addons_json) }))
+        participants: participants.map(p => ({ ...p, character_image: images.characters.get(p.character), perks: parse(p.perks_json), addons: parse(p.addons_json) }))
       };
       return result;
     });

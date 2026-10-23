@@ -375,11 +375,10 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
     });
 
     const loginWindow = browser;
-    loginWindow.on("close", event => {
-      if (!loginWindow.forceClose) {
-        event.preventDefault();
-        loginWindow.hide();
-        stopLoginWatcher();
+    loginWindow.on("close", () => {
+      stopLoginWatcher();
+      if (browser === loginWindow) {
+        browser = null;
       }
     });
 
@@ -443,7 +442,9 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
         status("Login concluído com sucesso! Fechando janela...");
         setTimeout(() => {
           if (win && !win.isDestroyed()) {
-            win.hide();
+            win.forceClose = true;
+            win.close();
+            if (browser === win) browser = null;
           }
           collect();
         }, 1000);
@@ -603,7 +604,9 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
     const token = await checkAndExtractAuth(win);
     stopLoginWatcher();
     if (win && !win.isDestroyed()) {
-      win.hide();
+      win.forceClose = true;
+      win.close();
+      if (browser === win) browser = null;
     }
     if (token) {
       status("Login concluído com sucesso!");

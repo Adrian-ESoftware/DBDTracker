@@ -41,14 +41,12 @@ if (process.platform === "win32") {
   app.commandLine.appendSwitch("disable-software-rasterizer");
   app.commandLine.appendSwitch("wm-window-animations-disabled");
 }
-app.commandLine.appendSwitch("js-flags", "--max-old-space-size=192");
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=96");
 app.commandLine.appendSwitch("disable-site-isolation-trials");
-app.commandLine.appendSwitch("disable-features", "SpareRendererForSitePerProcess,TranslateUI,BlinkGenPropertyTrees");
+app.commandLine.appendSwitch("disable-features", "SpareRendererForSitePerProcess,TranslateUI,BlinkGenPropertyTrees,BackForwardCache");
 // Reduz processos auxiliares e networking em background
 app.commandLine.appendSwitch("renderer-process-limit", "1");
 app.commandLine.appendSwitch("disable-background-networking");
-app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
-app.commandLine.appendSwitch("disable-renderer-backgrounding");
 app.commandLine.appendSwitch("disable-component-update");
 app.commandLine.appendSwitch("disable-sync");
 app.commandLine.appendSwitch("disable-translate");
@@ -322,6 +320,7 @@ function createWindow() {
       contextIsolation: true,
       spellcheck: false,
       enableWebSQL: false,
+      backgroundThrottling: true,
       v8CacheOptions: "none"
     }
   });

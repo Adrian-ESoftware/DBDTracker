@@ -66,11 +66,28 @@ h2:first-child{margin-top:2px}
 .bar-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .bar small{color:#cbd5e1;font-size:11.5px;font-weight:600;white-space:nowrap}
 .bar-name{display:flex;align-items:center;gap:9px;min-width:0;font-size:12.5px;font-weight:700;color:#f8fafc}
+.bar-metrics{display:flex;align-items:baseline;gap:7px;flex-shrink:0;white-space:nowrap}
+.bar-count{font-size:12.5px;font-weight:800;color:#fff}
+.bar-count small{font-size:10px;font-weight:600;color:var(--muted)}
+.bar-pct{font-size:11px;font-weight:700;color:#cbd5e1;background:#121822;border:1px solid #2b3648;padding:1px 6px;border-radius:4px}
 .bar-sub{font-size:10.5px;color:var(--muted);margin-top:5px;display:flex;flex-wrap:wrap;gap:5px;line-height:1.35}
 .bar-badge{background:#121822;border:1px solid #2b3648;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;color:#cbd5e1}
-.thumb{width:34px;height:34px;object-fit:contain;border-radius:5px;background:#0c0f14;border:1px solid #252e3d;flex-shrink:0}
+.thumb{width:36px;height:36px;object-fit:contain;border-radius:6px;background:#0c0f14;border:1px solid #283244;flex-shrink:0}
+.thumb-fallback{width:36px;height:36px;border-radius:6px;background:#161e2b;border:1px solid #2d384c;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:800;color:#cbd5e1}
 .track{height:5px;margin-top:6px;border-radius:4px;background:#242b35}
 .fill{height:100%;background:var(--red);border-radius:4px}
+
+/* Community Highlights Hero Cards */
+.comm-highlights-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:14px}
+.comm-hero-card{display:flex;align-items:center;gap:11px;background:linear-gradient(145deg,#18202c,#0d121a);border:1px solid var(--line);border-radius:9px;padding:10px 12px;position:relative;overflow:hidden;transition:border-color .15s,background .15s}
+.comm-hero-card.clickable{cursor:pointer}
+.comm-hero-card.clickable:hover{border-color:var(--red);background:linear-gradient(145deg,#1e2736,#111722)}
+.comm-hero-img{width:48px;height:48px;border-radius:7px;object-fit:contain;background:#0a0d13;border:1.5px solid #334155;flex-shrink:0}
+.comm-hero-blank{width:48px;height:48px;border-radius:7px;background:#161e2b;border:1.5px solid #334155;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#e2e8f0}
+.comm-hero-body{min-width:0;flex:1}
+.comm-hero-label{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--red);margin-bottom:2px}
+.comm-hero-title{font-size:14px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.comm-hero-meta{font-size:11px;color:#cbd5e1;margin-top:3px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
 
 /* Pills & Inspector */
 .pill-group{display:inline-flex;gap:4px;background:#0c1017;padding:3px;border-radius:7px;border:1px solid var(--line)}
@@ -597,7 +614,7 @@ h2:first-child{margin-top:2px}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
             <span style="font-size:10px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; color:var(--text);">Atualizações do Software (GitHub)</span>
           </div>
-          <span id="updater-version-badge" style="font-size:9px; font-weight:700; background:#1f2937; color:#9ca3af; padding:2px 6px; border-radius:4px;">v1.2.4</span>
+          <span id="updater-version-badge" style="font-size:9px; font-weight:700; background:#1f2937; color:#9ca3af; padding:2px 6px; border-radius:4px;">v1.2.5</span>
         </div>
         <div style="border-top:1px solid var(--line); padding-top:8px; display:flex; flex-direction:column; gap:8px;">
           <div id="updater-status-text" style="font-size:10px; color:var(--muted);">Verificação automática ativada via GitHub Releases.</div>
@@ -704,11 +721,13 @@ var itemImages = {};
 var addonImages = {};
 var offeringImages = {};
 var mapImages = {};
+var characterImages = {};
+var lastCommunityData = null;
 var communityOfficialEmail = null;
 
 // Wiki Encyclopedia state (loaded from /api/wiki)
 var wikiData = { perks: {}, addons: {}, items: {}, offerings: {}, characters: {} };
-var wikiIndex = { perk: {}, addon: {}, item: {}, offering: {}, any: {} };
+var wikiIndex = { perk: {}, addon: {}, item: {}, offering: {}, character: {}, any: {} };
 var wikiLoaded = false;
 
 function slugifyWiki(str) {
@@ -717,12 +736,13 @@ function slugifyWiki(str) {
 
 function indexWikiCatalog(data) {
   wikiData = data || { perks: {}, addons: {}, items: {}, offerings: {}, characters: {} };
-  wikiIndex = { perk: {}, addon: {}, item: {}, offering: {}, any: {} };
+  wikiIndex = { perk: {}, addon: {}, item: {}, offering: {}, character: {}, any: {} };
   var groups = [
     ['perk', wikiData.perks || {}],
     ['addon', wikiData.addons || {}],
     ['item', wikiData.items || {}],
-    ['offering', wikiData.offerings || {}]
+    ['offering', wikiData.offerings || {}],
+    ['character', wikiData.characters || {}]
   ];
   groups.forEach(function(pair) {
     var kind = pair[0];
@@ -738,6 +758,12 @@ function indexWikiCatalog(data) {
       if (kName) wikiIndex[kind][kName] = entry;
       if (sId) wikiIndex[kind][sId] = entry;
       if (sName) wikiIndex[kind][sName] = entry;
+      if (kind === 'character' && kName.indexOf('the ') === 0) {
+        var shortName = kName.slice(4);
+        var shortSlug = slugifyWiki(shortName);
+        wikiIndex.character[shortName] = entry;
+        if (shortSlug) wikiIndex.character[shortSlug] = entry;
+      }
       wikiIndex.any[kId] = entry;
       if (kName) wikiIndex.any[kName] = entry;
       if (sId) wikiIndex.any[sId] = entry;
@@ -777,6 +803,33 @@ function resolveAssetImage(kind, rawNameOrId, primaryMap) {
     if (entry.image) return entry.image;
   }
   return null;
+}
+
+function resolveCharacterImage(rawName, charMap) {
+  if (!rawName) return null;
+  var map = charMap || characterImages || {};
+  if (map[rawName]) return map[rawName];
+  var stripped = String(rawName).replace(/^The\s+/i, '').trim();
+  if (map[stripped]) return map[stripped];
+  if (map['The ' + stripped]) return map['The ' + stripped];
+  var targetSlug = slugifyWiki(stripped);
+  for (var k in map) {
+    var kStripped = String(k).replace(/^The\s+/i, '').trim();
+    if (slugifyWiki(kStripped) === targetSlug) return map[k];
+  }
+  var entry = lookupWikiItem('character', rawName) || lookupWikiItem('character', stripped);
+  if (entry && entry.image) return entry.image;
+  return null;
+}
+
+function resolveMapImage(rawMapName) {
+  if (!rawMapName) return null;
+  if (mapImages && mapImages[rawMapName]) return mapImages[rawMapName];
+  var targetSlug = slugifyWiki(rawMapName);
+  for (var k in mapImages) {
+    if (slugifyWiki(k) === targetSlug) return mapImages[k];
+  }
+  return typeof getMapImage === 'function' ? getMapImage(rawMapName) : null;
 }
 
 function loadWikiCatalog() {
@@ -1003,6 +1056,9 @@ window.jumpToMatchesFilter = function(query, role) {
 function buildBarSub(x, key) {
   var badges = [];
   if (key === 'map') {
+    if (x.winrate != null) {
+      badges.push('Winrate: ' + x.winrate + '%');
+    }
     if (x.surv_count) {
       badges.push('Surv: ' + x.surv_count + 'p (' + (x.surv_escape_rate != null ? x.surv_escape_rate + '% Fuga' : x.surv_winrate + '% WR') + ')');
     }
@@ -1016,6 +1072,9 @@ function buildBarSub(x, key) {
       badges.push(x.realm);
     }
   } else if (key === 'killer') {
+    if (x.winrate != null) {
+      badges.push('Winrate Killer: ' + x.winrate + '%');
+    }
     if (x.escape_rate != null) {
       badges.push('Fuga pessoal: ' + x.escape_rate + '%');
     }
@@ -1025,6 +1084,9 @@ function buildBarSub(x, key) {
       badges.push('Média: ' + x.average_kills + 'K');
     }
   } else if (key === 'character') {
+    if (x.winrate != null) {
+      badges.push((x.average_kills != null ? 'Winrate Killer: ' : 'Taxa de Fuga: ') + x.winrate + '%');
+    }
     if (x.hours != null) {
       badges.push((Math.round(x.hours * 10) / 10) + 'h jogadas');
     }
@@ -1044,25 +1106,28 @@ function buildBarSub(x, key) {
 function bars(id, rows, key, initialLimit) {
   var el = $(id);
   if (!rows || !rows.length) { el.innerHTML = '<small style="color:var(--muted)">Sem dados.</small>'; return; }
-  var limit = initialLimit || 4;
+  var limit = initialLimit || 6;
   var expanded = el.dataset.expanded === 'true';
   var visibleRows = expanded ? rows : rows.slice(0, limit);
+  var unitLabel = key === 'perk' ? 'usos' : 'partidas';
   el.innerHTML = visibleRows.map(function(x) {
     var val = x[key];
     var displayVal = key === 'perk' ? displayWikiName('perk', val) : val;
-    var img = x.image || (key === 'perk' ? resolveAssetImage('perk', val, perkImages) : null);
-    var suffix = '';
-    if (x.winrate !== undefined && x.winrate !== null) {
-      suffix = ' (' + x.winrate + '%WR)';
-    } else if (x.average_kills !== undefined && x.average_kills !== null) {
-      suffix = ' (' + x.average_kills + 'K)';
-    }
-    var name = displayVal + suffix;
+    var img = x.image || (
+      key === 'perk' ? resolveAssetImage('perk', val, perkImages) :
+      key === 'map' ? resolveMapImage(val) :
+      resolveCharacterImage(val, characterImages)
+    );
+    var abbr = String(displayVal || '?').split(' ').map(function(w) { return w[0] || ''; }).join('').slice(0, 2).toUpperCase();
+    var thumbHtml = img
+      ? '<img class="thumb" loading="lazy" decoding="async" src="' + esc(img) + '" title="' + esc(displayVal) + '">'
+      : '<div class="thumb-fallback" title="' + esc(displayVal) + '">' + esc(abbr) + '</div>';
     var isSelected = activeInspect && activeInspect.key === key && activeInspect.value === val;
     return '<div class="bar clickable' + (isSelected ? ' active-inspect' : '') + '" data-inspect-key="' + esc(key) + '" data-inspect-val="' + esc(val) + '" title="Clique para inspecionar ' + esc(displayVal) + '">' +
       '<div class="bar-top"><span class="bar-name">' +
-      (img ? '<img class="thumb" src="' + esc(img) + '" title="' + esc(displayVal) + '">' : '') +
-      '<span>' + esc(name) + '</span></span><small>' + x.count + ' &nbsp;' + x.pct + '%</small></div>' +
+      thumbHtml +
+      '<span style="overflow:hidden;text-overflow:ellipsis;">' + esc(displayVal) + '</span></span>' +
+      '<div class="bar-metrics"><span class="bar-count">' + fmt(x.count) + ' <small>' + unitLabel + '</small></span><span class="bar-pct">' + x.pct + '%</span></div></div>' +
       buildBarSub(x, key) +
       '<div class="track"><div class="fill" style="width:' + Math.max(2, x.pct) + '%"></div></div></div>';
   }).join('');
@@ -1164,6 +1229,11 @@ function inspectItem(key, val) {
 
   var wikiEntry = key === 'perk' ? lookupWikiItem('perk', val) : null;
   var displayTitle = wikiEntry ? wikiEntry.name : val;
+  var inspectImg = key === 'perk'
+    ? resolveAssetImage('perk', val, perkImages)
+    : key === 'map'
+      ? resolveMapImage(val)
+      : resolveCharacterImage(val, characterImages);
   var perkDescBlock = (wikiEntry && wikiEntry.description)
     ? '<div class="wiki-desc" style="margin-top:0;margin-bottom:10px;">' +
         (wikiEntry.owner ? '<div style="font-size:10.5px;color:var(--muted);margin-bottom:5px;">Perk ensinável de <b style="color:#fff;">' + esc(wikiEntry.owner) + '</b></div>' : '') +
@@ -1171,16 +1241,42 @@ function inspectItem(key, val) {
       '</div>'
     : '';
 
+  var commBlock = '';
+  if (lastCommunityData) {
+    var targetLower = String(val || '').toLowerCase();
+    var commItem = null;
+    if (key === 'character') {
+      commItem = ((lastCommunityData.characters && lastCommunityData.characters.survivor) || []).concat((lastCommunityData.characters && lastCommunityData.characters.killer) || []).find(function(c) { return String(c.value || '').toLowerCase() === targetLower; });
+    } else if (key === 'killer') {
+      commItem = (lastCommunityData.killers || []).find(function(c) { return String(c.killer || '').toLowerCase() === targetLower; });
+    } else if (key === 'map') {
+      commItem = (lastCommunityData.maps || []).find(function(c) { return String(c.value || '').toLowerCase() === targetLower; });
+    } else if (key === 'perk') {
+      commItem = ((lastCommunityData.perks && lastCommunityData.perks.survivor) || []).concat((lastCommunityData.perks && lastCommunityData.perks.killer) || []).find(function(c) { return String(c.value || '').toLowerCase() === targetLower; });
+    }
+    if (commItem) {
+      commBlock = '<div class="bar-sub" style="margin-bottom:9px;">' +
+        '<span class="bar-badge" style="border-color:var(--red);color:#fff;">Comunidade: ' + fmt(commItem.count) + ' registros' + (commItem.pct != null ? ' (' + commItem.pct + '%)' : '') + '</span>' +
+        (commItem.winrate != null ? '<span class="bar-badge">Winrate Comunidade: ' + commItem.winrate + '%</span>' : '') +
+        (commItem.average_kills != null ? '<span class="bar-badge">Média Comunidade: ' + commItem.average_kills + 'K</span>' : '') +
+      '</div>';
+    }
+  }
+
   var typeNames = { map: 'Mapa', killer: 'Killer', character: 'Personagem', perk: 'Perk' };
   box.innerHTML =
     '<div class="inspector-header">' +
-      '<div><span style="font-size:10px;text-transform:uppercase;color:var(--red);font-weight:800;letter-spacing:.08em;">Raio-X de ' + esc(typeNames[key] || key) + '</span>' +
-      '<div style="font-size:15px;font-weight:800;color:var(--text);">' + esc(displayTitle) + '</div></div>' +
-      '<div style="display:flex;gap:6px;align-items:center;">' +
+      '<div style="display:flex;align-items:center;gap:10px;min-width:0;">' +
+        (inspectImg ? '<img class="comm-hero-img" src="' + esc(inspectImg) + '" alt="' + esc(displayTitle) + '">' : '') +
+        '<div style="min-width:0;"><span style="font-size:10px;text-transform:uppercase;color:var(--red);font-weight:800;letter-spacing:.08em;">Raio-X de ' + esc(typeNames[key] || key) + '</span>' +
+        '<div style="font-size:15px;font-weight:800;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(displayTitle) + '</div></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">' +
         '<button style="font-size:11px;padding:5px 10px;background:var(--red);border-color:var(--red);color:#fff;font-weight:700;" data-jump-val="' + esc(val) + '">Ver ' + filtered.length + ' partida(s)</button>' +
         '<button style="font-size:12px;padding:4px 8px;" onclick="closeInspector()" title="Fechar">✕</button>' +
       '</div>' +
     '</div>' +
+    commBlock +
     perkDescBlock +
     '<div class="inspector-grid">' +
       '<div class="inspector-stat"><span>Suas Partidas</span><b>' + filtered.length + '</b></div>' +
@@ -1406,8 +1502,9 @@ function renderMatches() {
     var matchKey = getMatchKey(x, i);
     var isOpen = openMatchIds.has(matchKey);
     var openClasses = isOpen ? ' open no-anim' : '';
-    var charImg = x.character_image
-      ? '<img class="match-char-img" src="' + esc(x.character_image) + '" title="' + esc(x.character || '') + '">'
+    var resolvedCharImg = x.character_image || resolveCharacterImage(x.character, characterImages);
+    var charImg = resolvedCharImg
+      ? '<img class="match-char-img" loading="lazy" decoding="async" src="' + esc(resolvedCharImg) + '" title="' + esc(x.character || '') + '">'
       : '<div class="match-char-blank"></div>';
     var date = new Date(x.played_at).toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
     var roleTag = x.role === 'killer'
@@ -1417,7 +1514,7 @@ function renderMatches() {
       charImg +
       '<div><div class="match-title"><span>' + esc(x.character || '?') + '</span>' + roleTag + '</div><small>' + esc(x.map || '?') + ' &bull; ' + date + '</small></div>' +
       '<div class="match-right"><span class="result ' + resultClass(x.result) + '">' + esc(x.result) + '</span><br><small>' + fmt(x.score) + ' bp</small><span class="match-chevron"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg></span></div>' +
-      buildMatchDetail(x) +
+      (isOpen ? buildMatchDetail(x) : '') +
       '</div>';
   }).join('');
 
@@ -1453,6 +1550,13 @@ function renderMatches() {
         card.classList.remove('open');
         if (key) openMatchIds.delete(key);
       } else {
+        if (!card.querySelector('.match-detail')) {
+          var idx = Number(card.dataset.idx);
+          var mItem = matchData[idx];
+          if (mItem) {
+            card.insertAdjacentHTML('beforeend', buildMatchDetail(mItem));
+          }
+        }
         card.classList.add('open');
         if (key) openMatchIds.add(key);
       }
@@ -1588,40 +1692,7 @@ async function load() {
     if ($('trends-period-group')) $('trends-period-group').style.display = trendsGlobal ? 'none' : 'inline-flex';
     if ($('perks-others-block')) $('perks-others-block').style.display = trendsGlobal ? 'none' : 'block';
 
-    if (trendsGlobal && community) {
-      $('characters-ranking-title').textContent = 'Personagens Mais Jogados (Comunidade)';
-      $('perks-user-title').textContent = 'Perks Mais Usadas (Comunidade)';
-      cOwnSurv = community.characters.survivor.map(function(x) { return { character: x.value, count: x.count, pct: x.pct, winrate: x.winrate }; });
-      cOwnKiller = community.characters.killer.map(function(x) { return { character: x.value, count: x.count, pct: x.pct, winrate: x.winrate, average_kills: x.average_kills }; });
-      k = community.killers.map(function(x) { return { killer: x.killer, count: x.count, pct: 0, winrate: x.winrate, average_kills: x.average_kills }; });
-      var killerTotal = k.reduce(function(sum, x) { return sum + x.count; }, 0);
-      k.forEach(function(x) { x.pct = killerTotal ? Math.round(x.count * 1000 / killerTotal) / 10 : 0; });
-      m = community.maps.map(function(x) { return { map: x.value, count: x.count, pct: x.pct, winrate: x.winrate }; });
-      pOthersSurv = community.perks.survivor.map(function(x) { return { perk: x.value, count: x.count, pct: x.pct }; });
-      pOthersKiller = community.perks.killer.map(function(x) { return { perk: x.value, count: x.count, pct: x.pct }; });
-      pOwnSurv = pOthersSurv;
-      pOwnKiller = pOthersKiller;
-
-      var commTotalMatches = community.total_matches || m.reduce(function(sum, x) { return sum + x.count; }, 0);
-      var topCommSurv = cOwnSurv[0] ? cOwnSurv[0].character : '-';
-      var topCommKiller = k[0] ? k[0].killer : '-';
-      var topCommMap = m[0] ? m[0].map : '-';
-      if ($('community-summary')) {
-        $('community-summary').style.display = 'grid';
-        $('community-summary').innerHTML =
-          '<div class="filter-summary-item"><span>Partidas Comunidade</span><b>' + fmt(commTotalMatches) + '</b></div>' +
-          '<div class="filter-summary-item"><span>Top Survivor</span><b>' + esc(topCommSurv) + '</b></div>' +
-          '<div class="filter-summary-item"><span>Top Killer</span><b>' + esc(topCommKiller) + '</b></div>' +
-          '<div class="filter-summary-item"><span>Top Mapa</span><b>' + esc(topCommMap) + '</b></div>';
-      }
-    } else {
-      $('characters-ranking-title').textContent = 'Personagens Mais Jogados (' + (statsPeriod === '30-days' ? '30 Dias' : 'Oficial') + ')';
-      $('perks-user-title').textContent = 'Perks do Usuário (' + (statsPeriod === '30-days' ? '30 Dias' : 'Oficial') + ')';
-      $('perks-others-title').textContent = 'Perks dos Outros Jogadores';
-      if ($('community-summary')) $('community-summary').style.display = 'none';
-    }
-
-    // Build all image maps
+    // Build all image maps first so both Community & Local modes have full images
     perkImages = {};
     var addPerks = function(list) {
       (list || []).forEach(function(item) { if (item.perk && item.image) perkImages[item.perk] = item.image; });
@@ -1630,19 +1701,113 @@ async function load() {
     addPerks(pOwnKiller);
     addPerks(pOthersSurv);
     addPerks(pOthersKiller);
-    itemImages     = (allAssets && allAssets.items)     || {};
-    addonImages    = (allAssets && allAssets.addons)    || {};
-    offeringImages = (allAssets && allAssets.offerings) || {};
-    mapImages      = (allAssets && allAssets.maps)      || {};
+    itemImages      = (allAssets && allAssets.items)      || {};
+    addonImages     = (allAssets && allAssets.addons)     || {};
+    offeringImages  = (allAssets && allAssets.offerings)  || {};
+    mapImages       = (allAssets && allAssets.maps)       || {};
+    characterImages = (allAssets && allAssets.characters) || {};
     var catalogPerks = (allAssets && allAssets.perks) || {};
     for (var pName in catalogPerks) {
       if (!perkImages[pName]) perkImages[pName] = catalogPerks[pName];
     }
+
     if (trendsGlobal && community) {
-      cOwnSurv.concat(cOwnKiller).forEach(function(x) { x.image = (allAssets.characters || {})[x.character]; });
-      k.forEach(function(x) { x.image = (allAssets.characters || {})[x.killer]; });
-      m.forEach(function(x) { x.image = mapImages[x.map]; });
-      pOthersSurv.concat(pOthersKiller).forEach(function(x) { x.image = perkImages[x.perk]; });
+      lastCommunityData = community;
+      $('characters-ranking-title').textContent = 'Personagens Mais Jogados (Comunidade)';
+      $('perks-user-title').textContent = 'Perks Mais Usadas (Comunidade)';
+      cOwnSurv = (community.characters.survivor || []).map(function(x) {
+        return { character: x.value, count: x.count, pct: x.pct, winrate: x.winrate, image: resolveCharacterImage(x.value, characterImages) };
+      });
+      cOwnKiller = (community.characters.killer || []).map(function(x) {
+        return { character: x.value, count: x.count, pct: x.pct, winrate: x.winrate, average_kills: x.average_kills, image: resolveCharacterImage(x.value, characterImages) };
+      });
+      var killerTotal = (community.killers || []).reduce(function(sum, x) { return sum + x.count; }, 0);
+      k = (community.killers || []).map(function(x) {
+        var pct = killerTotal ? Math.round(x.count * 1000 / killerTotal) / 10 : 0;
+        return { killer: x.killer, count: x.count, pct: pct, winrate: x.winrate, average_kills: x.average_kills, image: resolveCharacterImage(x.killer, characterImages) };
+      });
+      m = (community.maps || []).map(function(x) {
+        return { map: x.value, count: x.count, pct: x.pct, winrate: x.winrate, image: resolveMapImage(x.value) };
+      });
+      pOthersSurv = (community.perks.survivor || []).map(function(x) {
+        return { perk: x.value, count: x.count, pct: x.pct, image: resolveAssetImage('perk', x.value, perkImages) };
+      });
+      pOthersKiller = (community.perks.killer || []).map(function(x) {
+        return { perk: x.value, count: x.count, pct: x.pct, image: resolveAssetImage('perk', x.value, perkImages) };
+      });
+      pOwnSurv = pOthersSurv;
+      pOwnKiller = pOthersKiller;
+
+      var commTotalMatches = community.total_matches || m.reduce(function(sum, x) { return sum + x.count; }, 0);
+      var survRecordsTotal = cOwnSurv.reduce(function(sum, x) { return sum + x.count; }, 0);
+      var topSurvItem = cOwnSurv[0] || null;
+      var topKillerItem = k[0] || cOwnKiller[0] || null;
+      var topKillerName = topKillerItem ? (topKillerItem.killer || topKillerItem.character) : '-';
+      var topMapItem = m[0] || null;
+
+      var buildHeroCard = function(label, title, imgUrl, count, pct, extraBadge, inspectKey, inspectVal) {
+        var abbr = String(title || '?').split(' ').map(function(w) { return w[0] || ''; }).join('').slice(0, 2).toUpperCase();
+        var thumb = imgUrl
+          ? '<img class="comm-hero-img" src="' + esc(imgUrl) + '" alt="' + esc(title) + '">'
+          : '<div class="comm-hero-blank">' + esc(abbr) + '</div>';
+        return '<div class="comm-hero-card clickable" data-comm-key="' + esc(inspectKey) + '" data-comm-val="' + esc(inspectVal) + '" title="Clique para inspecionar ' + esc(title) + '">' +
+          thumb +
+          '<div class="comm-hero-body">' +
+            '<div class="comm-hero-label">' + esc(label) + '</div>' +
+            '<div class="comm-hero-title">' + esc(title) + '</div>' +
+            '<div class="comm-hero-meta">' +
+              '<span class="bar-badge" style="color:#fff;border-color:#3b495e;">' + fmt(count) + ' partidas (' + pct + '%)</span>' +
+              (extraBadge ? '<span class="bar-badge" style="color:var(--green);">' + esc(extraBadge) + '</span>' : '') +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      };
+
+      if ($('community-summary')) {
+        var summaryEl = $('community-summary');
+        summaryEl.className = 'comm-highlights-grid';
+        summaryEl.style.display = 'grid';
+        summaryEl.innerHTML =
+          '<div class="comm-hero-card">' +
+            '<div class="comm-hero-blank" style="border-color:var(--red);color:var(--red);font-size:18px;">★</div>' +
+            '<div class="comm-hero-body">' +
+              '<div class="comm-hero-label">Partidas na Comunidade</div>' +
+              '<div style="font-size:22px;font-weight:900;color:#fff;line-height:1.1;">' + fmt(commTotalMatches) + ' <span style="font-size:11px;font-weight:600;color:var(--muted);">partidas</span></div>' +
+              '<div class="comm-hero-meta">' +
+                '<span class="bar-badge">' + fmt(survRecordsTotal) + ' survs</span>' +
+                '<span class="bar-badge">' + fmt(killerTotal) + ' killers</span>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          (topSurvItem
+            ? buildHeroCard('Top Survivor', topSurvItem.character, topSurvItem.image, topSurvItem.count, topSurvItem.pct, topSurvItem.winrate != null ? topSurvItem.winrate + '% Fuga' : '', 'character', topSurvItem.character)
+            : '') +
+          (topKillerItem
+            ? buildHeroCard('Top Killer', topKillerName, topKillerItem.image, topKillerItem.count, topKillerItem.pct, (topKillerItem.winrate != null ? topKillerItem.winrate + '% WR' : '') + (topKillerItem.average_kills != null ? ' • ' + topKillerItem.average_kills + 'K' : ''), 'killer', topKillerName)
+            : '') +
+          (topMapItem
+            ? buildHeroCard('Top Mapa', topMapItem.map, topMapItem.image, topMapItem.count, topMapItem.pct, topMapItem.winrate != null ? topMapItem.winrate + '% WR' : '', 'map', topMapItem.map)
+            : '');
+        summaryEl.querySelectorAll('.comm-hero-card.clickable').forEach(function(cardEl) {
+          cardEl.onclick = function() {
+            inspectItem(cardEl.getAttribute('data-comm-key'), cardEl.getAttribute('data-comm-val'));
+          };
+        });
+      }
+    } else {
+      $('characters-ranking-title').textContent = 'Personagens Mais Jogados (' + (statsPeriod === '30-days' ? '30 Dias' : 'Oficial') + ')';
+      $('perks-user-title').textContent = 'Perks do Usuário (' + (statsPeriod === '30-days' ? '30 Dias' : 'Oficial') + ')';
+      $('perks-others-title').textContent = 'Perks dos Outros Jogadores';
+      if ($('community-summary')) $('community-summary').style.display = 'none';
+      (cOwnSurv || []).concat(cOwnKiller || []).forEach(function(x) {
+        if (!x.image) x.image = resolveCharacterImage(x.character, characterImages);
+      });
+      (k || []).forEach(function(x) {
+        if (!x.image) x.image = resolveCharacterImage(x.killer, characterImages);
+      });
+      (m || []).forEach(function(x) {
+        if (!x.image) x.image = resolveMapImage(x.map);
+      });
     }
 
     // Page 1
@@ -1657,14 +1822,15 @@ async function load() {
     characterSection('killerStats','killerTitle','killerCard', top, 'killer');
 
     // Page 2
-    bars('characters-own-survivor', cOwnSurv, 'character', 3);
-    bars('characters-own-killer', cOwnKiller, 'character', 3);
-    bars('perks-own-survivor', pOwnSurv, 'perk', 4);
-    bars('perks-own-killer', pOwnKiller, 'perk', 4);
-    bars('perks-others-survivor', pOthersSurv, 'perk', 4);
-    bars('perks-others-killer', pOthersKiller, 'perk', 4);
-    bars('killers', k, 'killer', 4);
-    bars('maps', m, 'map', 4);
+    var defaultBarCount = trendsGlobal ? 8 : 6;
+    bars('characters-own-survivor', cOwnSurv, 'character', defaultBarCount);
+    bars('characters-own-killer', cOwnKiller, 'character', defaultBarCount);
+    bars('perks-own-survivor', pOwnSurv, 'perk', defaultBarCount);
+    bars('perks-own-killer', pOwnKiller, 'perk', defaultBarCount);
+    bars('perks-others-survivor', pOthersSurv, 'perk', defaultBarCount);
+    bars('perks-others-killer', pOthersKiller, 'perk', defaultBarCount);
+    bars('killers', k, 'killer', defaultBarCount);
+    bars('maps', m, 'map', defaultBarCount);
 
     // Page 3 — only rebuild matches DOM if the dataset changed
     allMatchData = recent || [];

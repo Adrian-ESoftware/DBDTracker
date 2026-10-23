@@ -100,13 +100,16 @@ export function normalizeWikiData({ perks = {}, addons = {}, items = {}, offerin
     if (!Number.isNaN(numKey)) {
       charByIndex.set(numKey, name);
     }
+    const charId = ch.id || key;
+    const roleFolder = ch.role === "killer" ? "killers" : "survivors";
     const entry = {
-      id: ch.id || key,
+      id: charId,
       name,
       role: ch.role || null,
       difficulty: ch.difficulty || null,
       bio: ch.bio || null,
-      perks: Array.isArray(ch.perks) ? ch.perks : []
+      perks: Array.isArray(ch.perks) ? ch.perks : [],
+      image: `${BHVR_ASSET_BASE}/characters/${roleFolder}/${charId}.png`
     };
     normalizedCharacters[key] = entry;
     if (ch.id) normalizedCharacters[ch.id] = entry;
@@ -210,6 +213,14 @@ export function createWikiCatalog({
     try {
       const parsed = JSON.parse(readFileSync(cachePath, "utf8"));
       if (parsed && parsed.perks && Object.keys(parsed.perks).length > 0) {
+        if (parsed.characters) {
+          for (const [cId, ch] of Object.entries(parsed.characters)) {
+            if (ch && !ch.image) {
+              const roleFolder = ch.role === "killer" ? "killers" : "survivors";
+              ch.image = `${BHVR_ASSET_BASE}/characters/${roleFolder}/${cId}.png`;
+            }
+          }
+        }
         data = parsed;
         return true;
       }
