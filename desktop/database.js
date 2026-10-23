@@ -164,6 +164,7 @@ export function openDatabase(path) {
           character TEXT, role TEXT, result TEXT, score INTEGER, perks_json TEXT,
           item TEXT, addons_json TEXT, offering TEXT
         );
+        CREATE INDEX IF NOT EXISTS idx_participants_match_id ON participants(match_id);
         CREATE TABLE IF NOT EXISTS source_snapshots (
           id TEXT PRIMARY KEY, source_url TEXT, kind TEXT, captured_at TEXT, raw_json TEXT, user_email TEXT
         );
@@ -223,6 +224,7 @@ export function openDatabase(path) {
           character TEXT, role TEXT, result TEXT, score INTEGER, perks_json TEXT,
           item TEXT, addons_json TEXT, offering TEXT
         );
+        CREATE INDEX IF NOT EXISTS idx_participants_match_id ON participants(match_id);
         CREATE TABLE IF NOT EXISTS source_snapshots (
           id TEXT PRIMARY KEY, source_url TEXT, kind TEXT, captured_at TEXT, raw_json TEXT, user_email TEXT
         );
@@ -737,20 +739,47 @@ export async function matches(db, limit = 100) {
   const images = await catalog(db);
   if (db.type === "sqlite") {
     const query = userEmail
-      ? "SELECT * FROM matches WHERE user_email = ? ORDER BY played_at DESC LIMIT ?"
-      : "SELECT * FROM matches WHERE user_email IS NULL ORDER BY played_at DESC LIMIT ?";
+      ? `SELECT m.*,
+                l.perks_json AS l_perks_json, l.item AS l_item, l.addons_json AS l_addons_json, l.offering AS l_offering,
+                k.killer AS k_killer, k.kills_count AS k_kills_count, k.perks_json AS k_perks_json, k.addons_json AS k_addons_json, k.offering AS k_offering
+         FROM matches m
+         LEFT JOIN loadouts l ON l.match_id = m.id
+         LEFT JOIN killer_info k ON k.match_id = m.id
+         WHERE m.user_email = ?
+         ORDER BY m.played_at DESC LIMIT ?`
+      : `SELECT m.*,
+                l.perks_json AS l_perks_json, l.item AS l_item, l.addons_json AS l_addons_json, l.offering AS l_offering,
+                k.killer AS k_killer, k.kills_count AS k_kills_count, k.perks_json AS k_perks_json, k.addons_json AS k_addons_json, k.offering AS k_offering
+         FROM matches m
+         LEFT JOIN loadouts l ON l.match_id = m.id
+         LEFT JOIN killer_info k ON k.match_id = m.id
+         WHERE m.user_email IS NULL
+         ORDER BY m.played_at DESC LIMIT ?`;
+    const getParticipants = db.db.prepare("SELECT * FROM participants WHERE match_id=?");
     return db.db.prepare(query).all(...(userEmail ? [userEmail, limit] : [limit])).map(match => {
-      const loadout = db.db.prepare("SELECT * FROM loadouts WHERE match_id=?").get(match.id);
-      const killer = db.db.prepare("SELECT * FROM killer_info WHERE match_id=?").get(match.id);
-      const participants = db.db.prepare("SELECT * FROM participants WHERE match_id=?").all(match.id);
-      return {
-        ...match,
+      const participants = getParticipants.all(match.id);
+      const hasKiller = match.k_killer != null || match.k_kills_count != null || match.k_perks_json != null;
+      const result = {
+        id: match.id,
+        source_id: match.source_id,
+        played_at: match.played_at,
+        role: match.role,
+        character: match.character,
+        map: match.map,
+        map_realm: match.map_realm,
+        duration_sec: match.duration_sec,
+        result: match.result,
+        score: match.score,
+        raw_json: match.raw_json,
+        imported_at: match.imported_at,
+        user_email: match.user_email,
         character_image: images.characters.get(match.character),
         map_image: images.maps.get(match.map),
-        loadout: { perks: parse(loadout?.perks_json), item: loadout?.item, addons: parse(loadout?.addons_json), offering: loadout?.offering },
-        killer_info: killer ? { killer: killer.killer, kills_count: killer.kills_count, perks: parse(killer.perks_json), addons: parse(killer.addons_json), offering: killer.offering } : null,
+        loadout: { perks: parse(match.l_perks_json), item: match.l_item, addons: parse(match.l_addons_json), offering: match.l_offering },
+        killer_info: hasKiller ? { killer: match.k_killer, kills_count: match.k_kills_count, perks: parse(match.k_perks_json), addons: parse(match.k_addons_json), offering: match.k_offering } : null,
         participants: participants.map(p => ({ ...p, perks: parse(p.perks_json), addons: parse(p.addons_json) }))
       };
+      return result;
     });
   } else {
     let query = db.client.from("matches").select("*");
@@ -833,37 +862,23 @@ export async function overview(db) {
   const wins = survivors.filter(row => /escaped|escape|fugiu|win|victory/i.test(row.result ?? "")).length;
   
   let fourK = 0;
-  if (db.type === "sqlite") {
-    fourK = killers.filter(row => db.db.prepare("SELECT kills_count FROM killer_info WHERE match_id=?").get(row.id)?.kills_count === 4).length;
-  } else {
-    const killerIds = killers.map(k => k.id);
-    if (killerIds.length) {
-      const { data: killerInfos } = check(await db.client.from("killer_info").select("match_id, kills_count").in("match_id", killerIds));
-      const killerInfoMap = new Map((killerInfos || []).map(ki => [ki.match_id, ki]));
-      fourK = killers.filter(row => killerInfoMap.get(row.id)?.kills_count === 4).length;
-    }
-  }
-
-  const scores = rows.map(row => row.score).filter(Number.isFinite);
-
-  let survWins = 0, survDraws = 0, survLosses = 0;
-  let killerWins = 0, killerDraws = 0, killerLosses = 0;
-
-  const matchIds = rows.map(r => r.id);
   const killerInfoMap = new Map();
   const participantsCountMap = new Map();
 
-  if (matchIds.length) {
+  if (rows.length) {
     if (db.type === "sqlite") {
-      for (const row of rows) {
-        const kInfo = db.db.prepare("SELECT kills_count FROM killer_info WHERE match_id=?").get(row.id);
-        if (kInfo) killerInfoMap.set(row.id, kInfo);
-        const pCount = db.db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id=? AND role='survivor' AND (result LIKE '%escape%' OR result LIKE '%escaped%' OR result LIKE '%fugiu%')").get(row.id)?.c || 0;
-        participantsCountMap.set(row.id, pCount);
+      for (const ki of db.db.prepare("SELECT match_id, kills_count FROM killer_info").all()) {
+        killerInfoMap.set(ki.match_id, ki);
       }
+      for (const pc of db.db.prepare("SELECT match_id, COUNT(*) AS c FROM participants WHERE role='survivor' AND (result LIKE '%escape%' OR result LIKE '%escaped%' OR result LIKE '%fugiu%') GROUP BY match_id").all()) {
+        participantsCountMap.set(pc.match_id, pc.c);
+      }
+      fourK = killers.filter(row => killerInfoMap.get(row.id)?.kills_count === 4).length;
     } else {
+      const matchIds = rows.map(r => r.id);
       const { data: killerInfos } = check(await db.client.from("killer_info").select("match_id, kills_count").in("match_id", matchIds));
       (killerInfos || []).forEach(ki => killerInfoMap.set(ki.match_id, ki));
+      fourK = killers.filter(row => killerInfoMap.get(row.id)?.kills_count === 4).length;
 
       const { data: escapedParticipants } = check(await db.client
         .from("participants")
@@ -877,6 +892,11 @@ export async function overview(db) {
       });
     }
   }
+
+  const scores = rows.map(row => row.score).filter(Number.isFinite);
+
+  let survWins = 0, survDraws = 0, survLosses = 0;
+  let killerWins = 0, killerDraws = 0, killerLosses = 0;
 
   for (const row of rows) {
     let kills = null;
@@ -1035,9 +1055,8 @@ export async function maps(db, global = false) {
   const participantsCountMap = new Map();
   if (matchIds.length) {
     if (db.type === "sqlite") {
-      for (const row of rows) {
-        const pCount = db.db.prepare("SELECT COUNT(*) c FROM participants WHERE match_id=? AND role='survivor' AND (result LIKE '%escape%' OR result LIKE '%escaped%' OR result LIKE '%fugiu%')").get(row.id)?.c || 0;
-        participantsCountMap.set(row.id, pCount);
+      for (const pc of db.db.prepare("SELECT match_id, COUNT(*) AS c FROM participants WHERE role='survivor' AND (result LIKE '%escape%' OR result LIKE '%escaped%' OR result LIKE '%fugiu%') GROUP BY match_id").all()) {
+        participantsCountMap.set(pc.match_id, pc.c);
       }
     } else {
       const { data: escapedParticipants } = check(await db.client

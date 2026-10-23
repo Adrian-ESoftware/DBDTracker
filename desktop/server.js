@@ -20,7 +20,7 @@ const body = request => new Promise((resolve, reject) => {
   request.on("error", reject);
 });
 
-export function startServer(db, port = 8765, mapOverlaysPath = "") {
+export function startServer(db, port = 8765, mapOverlaysPath = "", wikiCatalog = null) {
   return createServer(async (request, response) => {
     const origin = request.headers.origin;
     if (!allowedOrigin(origin)) return reply(response, 403, { detail: "Origin not allowed" });
@@ -65,6 +65,13 @@ export function startServer(db, port = 8765, mapOverlaysPath = "") {
       if (url.pathname === "/api/stats/characters") return reply(response, 200, await characters(db, url.searchParams.get("role") ?? "all", url.searchParams.get("period") ?? "all-time"), origin);
       if (url.pathname === "/api/stats/trends") return reply(response, 200, await trends(db), origin);
       if (url.pathname === "/api/assets") return reply(response, 200, await assetImages(db, url.searchParams.get("type") || null), origin);
+      if (url.pathname === "/api/wiki") {
+        if (!wikiCatalog) return reply(response, 200, { perks: {}, addons: {}, items: {}, offerings: {}, characters: {} }, origin);
+        if (url.searchParams.get("refresh") === "true") {
+          await wikiCatalog.refresh({ force: true });
+        }
+        return reply(response, 200, wikiCatalog.getData(), origin);
+      }
       if (url.pathname === "/api/matches") return reply(response, 200, await matches(db, Math.min(Number(url.searchParams.get("limit") ?? 1000), 5000)), origin);
       if (url.pathname === "/api/official-metrics") return reply(response, 200, await officialMetrics(db), origin);
       if (url.pathname === "/api/official-sections") return reply(response, 200, await officialSections(db), origin);

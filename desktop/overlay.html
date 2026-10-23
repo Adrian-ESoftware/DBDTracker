@@ -6,141 +6,164 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' http://127.0.0.1:* https://assets.live.bhvraccount.com; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http://127.0.0.1:* https://assets.live.bhvraccount.com;">
 <title>DBD Tracker Overlay</title>
 <style>
-:root{--bg:#090b10f2;--panel:#151a22;--line:#2a313c;--muted:#929dab;--red:#ec3c3c;--green:#50d28f;--text:#f4f5f7;--accent-soft:#ec3c3c55;--tab-h:38px}
-:root[data-theme="ocean"]{--bg:#071018f2;--panel:#10202b;--line:#254252;--muted:#89a9b8;--red:#35b9e8;--green:#55d6a0;--text:#edfaff;--accent-soft:#35b9e855}
-:root[data-theme="forest"]{--bg:#09120ef2;--panel:#13231b;--line:#2b4938;--muted:#94ae9d;--red:#67d38c;--green:#b1e56e;--text:#effff3;--accent-soft:#67d38c55}
-:root[data-theme="amber"]{--bg:#151009f2;--panel:#282016;--line:#55412a;--muted:#b7a184;--red:#f0a33a;--green:#a9d66b;--text:#fff8e9;--accent-soft:#f0a33a55}
+:root{--bg:#0a0d13f7;--panel:#161c25;--line:#2d3644;--muted:#a9b4c4;--red:#ec3c3c;--green:#50d28f;--text:#f8f9fa;--accent-soft:#ec3c3c44;--tab-h:42px}
+:root[data-theme="ocean"]{--bg:#071018f7;--panel:#11222e;--line:#284657;--muted:#9cbac9;--red:#35b9e8;--green:#55d6a0;--text:#f0fbff;--accent-soft:#35b9e844}
+:root[data-theme="forest"]{--bg:#09120ef7;--panel:#14261d;--line:#2e4e3c;--muted:#a4beae;--red:#67d38c;--green:#b1e56e;--text:#f2fff5;--accent-soft:#67d38c44}
+:root[data-theme="amber"]{--bg:#151009f7;--panel:#292117;--line:#57432c;--muted:#c5af93;--red:#f0a33a;--green:#a9d66b;--text:#fff9ed;--accent-soft:#f0a33a44}
 *{box-sizing:border-box}
-body{margin:0;color:var(--text);font:13px Inter,Segoe UI,sans-serif;background:transparent;user-select:none}
-.app{height:100vh;background:radial-gradient(circle at 80% -10%,var(--accent-soft),transparent 32%),var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 20px 55px #000a;display:flex;flex-direction:column}
+body{margin:0;color:var(--text);font:13.5px/1.45 Inter,Segoe UI,system-ui,sans-serif;background:transparent;user-select:none;-webkit-font-smoothing:antialiased}
+.app{position:relative;height:100vh;background:radial-gradient(circle at 80% -10%,var(--accent-soft),transparent 34%),var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 20px 55px #000c;display:flex;flex-direction:column}
 
 /* Titlebar */
-.titlebar{-webkit-app-region:drag;height:45px;flex-shrink:0;display:flex;align-items:center;padding:0 12px;border-bottom:1px solid var(--line);font-weight:850;letter-spacing:.1em}
-.mark{width:5px;height:19px;background:var(--red);transform:skew(-12deg);margin-right:9px}
-.actions{margin-left:auto;display:flex;gap:5px;-webkit-app-region:no-drag}
-.actions button{background:#1c222b;border:1px solid #313a46;color:#a4b1cd;border-radius:5px;width:26px;height:26px;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s ease}
+.titlebar{-webkit-app-region:drag;height:46px;flex-shrink:0;display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--line);font-size:13.5px;font-weight:850;letter-spacing:.1em}
+.mark{width:5px;height:20px;background:var(--red);transform:skew(-12deg);margin-right:10px}
+.actions{margin-left:auto;display:flex;gap:6px;-webkit-app-region:no-drag}
+.actions button{background:#1c222b;border:1px solid #353f4d;color:#b8c4dc;border-radius:6px;width:28px;height:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s ease}
 .actions button:hover{background:#2b333f;color:#fff}
 .actions button#hide:hover{background:#d93838;border-color:#d93838;color:#fff}
-.actions button svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-button{background:#1c222b;border:1px solid #313a46;color:#dce0e6;border-radius:5px;padding:5px 8px;cursor:pointer;font-size:12px}
-button:hover{background:#2b333f}
+.actions button svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+button{background:#1e2530;border:1px solid #364150;color:#e6eaf0;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px;font-weight:600;transition:background .15s,border-color .15s}
+button:hover{background:#2b3442;border-color:#48566a}
 
 /* Tabs */
-.tabs{display:flex;flex-shrink:0;border-bottom:1px solid var(--line);background:#0c0f15}
-.tab{flex:1;height:var(--tab-h);display:flex;align-items:center;justify-content:center;gap:6px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:color .15s,border-color .15s;-webkit-app-region:no-drag}
-.tab:hover{color:#ccc}
-.tab.active{color:var(--text);border-bottom-color:var(--red)}
-.tab-icon{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px}
-.tab-icon svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tabs{display:flex;flex-shrink:0;border-bottom:1px solid var(--line);background:#0c1017}
+.tab{flex:1;height:var(--tab-h);display:flex;align-items:center;justify-content:center;gap:7px;font-size:11px;font-weight:750;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;transition:color .15s,border-color .15s,background .15s;-webkit-app-region:no-drag}
+.tab:hover{color:#e2e8f0;background:rgba(255,255,255,0.02)}
+.tab.active{color:var(--text);border-bottom-color:var(--red);background:rgba(255,255,255,0.03)}
+.tab-icon{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px}
+.tab-icon svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 
 /* Content */
-.content{flex:1;overflow:auto;padding:13px}
+.content{flex:1;overflow:auto;padding:14px}
 .page{display:none}
 .page.active{display:block}
 
 /* Cards & grids */
-.kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.sections{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.details{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.card{position:relative;background:linear-gradient(145deg,var(--panel),var(--bg));border:1px solid var(--line);border-radius:8px;padding:11px;overflow:hidden}
-.card span{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}
-.card strong{display:block;font-size:22px;margin-top:5px}
-.card h3{position:relative;z-index:1;font-size:9px;color:var(--red);text-transform:uppercase;margin:0 0 6px}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sections{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.details{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.card{position:relative;background:linear-gradient(145deg,var(--panel),#0d1118);border:1px solid var(--line);border-radius:9px;padding:12px;overflow:hidden}
+.card span{color:var(--muted);font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.card strong{display:block;font-size:24px;margin-top:4px;font-weight:800}
+.card h3{position:relative;z-index:1;font-size:10.5px;font-weight:800;color:var(--red);text-transform:uppercase;letter-spacing:.06em;margin:0 0 8px}
 .good{color:var(--green)}
-h2{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#c6ccd5;margin:18px 2px 9px}
+h2{font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:#dce2ec;margin:18px 2px 10px}
 h2:first-child{margin-top:2px}
-.metric{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--line);font-size:10px}
-.metric b{text-align:right}
-.character-art{position:absolute;right:-8px;bottom:-12px;height:115px;opacity:.22;filter:drop-shadow(0 0 10px #000);pointer-events:none}
+.metric{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11.5px}
+.metric:last-child{border-bottom:none}
+.metric b{text-align:right;font-size:12px;color:#fff}
+.character-art{position:absolute;right:-8px;bottom:-12px;height:120px;opacity:.22;filter:drop-shadow(0 0 10px #000);pointer-events:none}
 .character-content{position:relative;z-index:1}
 
 /* Bars */
-.bars{display:grid;gap:6px}
-.bars-toggle{margin-top:7px;width:100%;font-size:9px;color:var(--muted);background:transparent;border-color:var(--line)}
+.bars{display:grid;gap:7px}
+.bars-toggle{margin-top:8px;width:100%;font-size:11px;font-weight:600;padding:6px;color:var(--muted);background:#11161f;border-color:var(--line)}
 .bars-toggle:hover{color:var(--text);border-color:var(--red)}
-.bar{padding:5px 7px;border-radius:6px;border:1px solid transparent;transition:background .15s,border-color .15s}
+.bar{padding:8px 10px;border-radius:7px;background:rgba(255,255,255,0.015);border:1px solid rgba(255,255,255,0.05);transition:background .15s,border-color .15s}
 .bar.clickable{cursor:pointer}
-.bar.clickable:hover{background:rgba(255,255,255,0.04);border-color:var(--line)}
-.bar.active-inspect{background:rgba(236,60,60,0.08);border-color:var(--red)}
-.bar-top{display:flex;justify-content:space-between;align-items:center;gap:6px}
-.bar small{color:var(--muted);white-space:nowrap}
-.bar-name{display:flex;align-items:center;gap:7px;min-width:0;font-weight:600}
-.bar-sub{font-size:9px;color:var(--muted);margin-top:3px;display:flex;flex-wrap:wrap;gap:6px;line-height:1.3}
-.bar-badge{background:#141922;border:1px solid #262f3d;padding:1px 5px;border-radius:4px;font-size:8.5px;color:#b8c4d4}
-.thumb{width:28px;height:28px;object-fit:contain;border-radius:4px;background:#0c0f14;flex-shrink:0}
-.track{height:4px;margin-top:4px;border-radius:4px;background:#2a3039}
+.bar.clickable:hover{background:rgba(255,255,255,0.055);border-color:#435063}
+.bar.active-inspect{background:rgba(236,60,60,0.11);border-color:var(--red)}
+.bar-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.bar small{color:#cbd5e1;font-size:11.5px;font-weight:600;white-space:nowrap}
+.bar-name{display:flex;align-items:center;gap:9px;min-width:0;font-size:12.5px;font-weight:700;color:#f8fafc}
+.bar-sub{font-size:10.5px;color:var(--muted);margin-top:5px;display:flex;flex-wrap:wrap;gap:5px;line-height:1.35}
+.bar-badge{background:#121822;border:1px solid #2b3648;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;color:#cbd5e1}
+.thumb{width:34px;height:34px;object-fit:contain;border-radius:5px;background:#0c0f14;border:1px solid #252e3d;flex-shrink:0}
+.track{height:5px;margin-top:6px;border-radius:4px;background:#242b35}
 .fill{height:100%;background:var(--red);border-radius:4px}
 
 /* Pills & Inspector */
-.pill-group{display:inline-flex;gap:3px;background:#0c0f15;padding:2px;border-radius:6px;border:1px solid var(--line)}
-.pill-btn{font-size:9.5px;font-weight:700;padding:3px 8px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--muted);cursor:pointer;transition:all .15s}
-.pill-btn:hover{color:var(--text);background:#18202a}
+.pill-group{display:inline-flex;gap:4px;background:#0c1017;padding:3px;border-radius:7px;border:1px solid var(--line)}
+.pill-btn{font-size:10.5px;font-weight:700;padding:4px 10px;border-radius:5px;border:1px solid transparent;background:transparent;color:var(--muted);cursor:pointer;transition:all .15s}
+.pill-btn:hover{color:var(--text);background:#1a222d}
 .pill-btn.active{background:var(--red);border-color:var(--red);color:#fff}
-.inspector-card{background:linear-gradient(145deg,#181f29,#0e131a);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:14px;animation:fadeIn .15s ease}
-.inspector-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
-.inspector-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}
-.inspector-stat{background:#0c0f15;border:1px solid var(--line);border-radius:5px;padding:6px;text-align:center}
-.inspector-stat span{display:block;font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
-.inspector-stat b{display:block;font-size:12px;margin-top:2px;color:var(--text)}
-.filter-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
-.filter-summary-item{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px;text-align:center}
-.filter-summary-item span{display:block;font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
-.filter-summary-item b{display:block;font-size:12px;margin-top:2px}
+.inspector-card{background:linear-gradient(145deg,#18202c,#0f141c);border:1px solid var(--red);border-radius:9px;padding:12px 14px;margin-bottom:14px;box-shadow:0 8px 24px rgba(0,0,0,0.45);animation:fadeIn .15s ease}
+.inspector-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.inspector-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:10px}
+.inspector-stat{background:#0c1017;border:1px solid var(--line);border-radius:6px;padding:7px;text-align:center}
+.inspector-stat span{display:block;font-size:9.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.inspector-stat b{display:block;font-size:13.5px;margin-top:3px;color:var(--text)}
+.filter-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px}
+.filter-summary-item{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px 9px;text-align:center}
+.filter-summary-item span{display:block;font-size:9.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.filter-summary-item b{display:block;font-size:13.5px;margin-top:3px}
 
 /* Match cards */
-.match{display:grid;grid-template-columns:44px 1fr auto;gap:3px 8px;align-items:center;background:linear-gradient(90deg,var(--panel),var(--bg));border:1px solid var(--line);padding:8px;border-radius:7px;margin-bottom:6px;cursor:pointer;transition:border-color .15s,background .15s}
-.match:hover{border-color:#3d4d5f;background:linear-gradient(90deg,#18202a,#131820)}
-.match.open{border-color:var(--accent-soft);background:linear-gradient(90deg,var(--panel),var(--bg))}
-.match-char-img{width:40px;height:40px;object-fit:contain;grid-row:span 2;border-radius:4px}
-.match-char-blank{width:40px;height:40px;background:#0c0f14;border-radius:4px;grid-row:span 2}
-.match small{color:var(--muted)}
+.match{display:grid;grid-template-columns:50px 1fr auto;gap:4px 10px;align-items:center;background:linear-gradient(90deg,var(--panel),#0e131b);border:1px solid var(--line);padding:10px 12px;border-radius:8px;margin-bottom:8px;cursor:pointer;transition:border-color .15s,background .15s}
+.match:hover{border-color:#47586e;background:linear-gradient(90deg,#1b2430,#131923)}
+.match.open{border-color:var(--red);background:linear-gradient(90deg,var(--panel),#0d1219)}
+.match-char-img{width:46px;height:46px;object-fit:contain;grid-row:span 2;border-radius:6px;background:#0b0e14;border:1px solid #263040}
+.match-char-blank{width:46px;height:46px;background:#0c0f14;border-radius:6px;grid-row:span 2;border:1px solid #263040}
+.match-title{font-size:13.5px;font-weight:750;color:#fff;display:flex;align-items:center;gap:6px}
+.match small{color:var(--muted);font-size:11px}
 .match-right{grid-row:span 2;align-self:center;text-align:right}
-.result{font-weight:700;font-size:13px}
+.result{font-weight:800;font-size:14px}
 .win{color:var(--green)}
-.loss{color:#ff7171}
-.match-chevron{display:inline-flex;align-items:center;justify-content:center;width:12px;height:12px;margin-left:4px;color:var(--muted);transition:transform .2s}
-.match-chevron svg{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+.loss{color:#ff7b7b}
+.match-chevron{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:5px;color:var(--muted);transition:transform .2s}
+.match-chevron svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
 .match.open .match-chevron{transform:rotate(180deg)}
 
 /* Match detail */
-.match-detail{display:none;grid-column:1/-1;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);animation:fadeIn .15s ease}
+.match-detail{display:none;grid-column:1/-1;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);cursor:default;animation:fadeIn .15s ease}
 .match.open .match-detail{display:block}
 .match.no-anim .match-detail{animation:none}
 .match.no-anim .match-chevron{transition:none}
 @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
-.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
 .detail-full{grid-column:1/-1}
-.detail-section{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px}
-.detail-section h4{font-size:9px;color:var(--red);text-transform:uppercase;letter-spacing:.08em;margin:0 0 6px}
-.detail-row{display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid #1a2030;font-size:10px}
+.detail-section{background:#0c1017;border:1px solid var(--line);border-radius:7px;padding:10px}
+.detail-section h4{font-size:10.5px;font-weight:800;color:var(--red);text-transform:uppercase;letter-spacing:.07em;margin:0 0 7px}
+.detail-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:11.5px}
 .detail-row:last-child{border-bottom:none}
 .detail-row span{color:var(--muted)}
-.perk-label{font-size:9px;color:var(--muted);margin:6px 0 4px}
+.perk-label{font-size:10px;font-weight:700;color:var(--muted);margin:8px 0 5px;letter-spacing:.04em}
 
-/* Perk icons */
-.perk-icons{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
-.perk-icon{width:28px;height:28px;border-radius:4px;object-fit:contain;background:#0c0f14;border:1px solid #2a3340;cursor:default;transition:transform .1s,border-color .1s}
-.perk-icon:hover{transform:scale(1.25);border-color:#ec3c3c;z-index:10;position:relative}
-.perk-icon-fallback{width:28px;height:28px;border-radius:4px;background:#1c2430;border:1px solid #2d3a4a;font-size:8px;color:#b8c8d8;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.1;padding:2px;cursor:default}
-.perk-icon-fallback:hover{border-color:#ec3c3c}
-.icon-sep{color:#3a4555;font-size:14px;line-height:28px;padding:0 3px;user-select:none;align-self:center}
+/* Perk & Add-on Interactive Icons */
+.perk-icons{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;align-items:center}
+.perk-icon{width:34px;height:34px;border-radius:6px;object-fit:contain;background:#0a0d13;border:1.5px solid #354254;cursor:pointer;transition:transform .12s,border-color .12s,box-shadow .12s}
+.perk-icon:hover{transform:scale(1.18);border-color:var(--red);box-shadow:0 4px 12px rgba(236,60,60,0.35);z-index:10;position:relative}
+.perk-icon-fallback{width:34px;height:34px;border-radius:6px;background:#1a222e;border:1.5px solid #354254;font-size:9.5px;font-weight:700;color:#dbe4f0;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.1;padding:2px;cursor:pointer;transition:transform .12s,border-color .12s}
+.perk-icon-fallback:hover{transform:scale(1.14);border-color:var(--red)}
+.rarity-common{border-color:#786048!important}
+.rarity-uncommon{border-color:#eab308!important}
+.rarity-rare{border-color:#22c55e!important}
+.rarity-veryrare{border-color:#a855f7!important}
+.rarity-ultrarare,.rarity-visceral{border-color:#f43f5e!important}
+.rarity-event{border-color:#f59e0b!important}
+.icon-sep{color:#475569;font-size:16px;line-height:34px;padding:0 3px;user-select:none;align-self:center}
 
 /* Participants */
-.participant-row{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #1a2030;font-size:10px}
+.participant-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11.5px}
 .participant-row:last-child{border-bottom:none}
-.participant-role{font-size:8px;padding:1px 4px;border-radius:3px;background:#1c2430;color:var(--muted)}
-.participant-result{margin-left:auto;font-size:10px;font-weight:700}
-.char-img-sm{width:24px;height:24px;border-radius:3px;object-fit:contain;background:#0c0f14}
+.participant-role{font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:4px;background:#1c2533;color:#cbd5e1;text-transform:uppercase}
+.participant-result{font-size:11.5px;font-weight:800}
+.char-img-sm{width:28px;height:28px;border-radius:4px;object-fit:contain;background:#0c0f14;border:1px solid #263040}
+
+/* Wiki Encyclopedia Modal */
+.wiki-modal-backdrop{display:none;position:absolute;inset:0;background:rgba(5,8,13,0.82);backdrop-filter:blur(4px);z-index:200;align-items:center;justify-content:center;padding:16px;animation:fadeIn .14s ease}
+.wiki-modal-backdrop.open{display:flex}
+.wiki-modal{width:100%;max-width:440px;max-height:85vh;overflow-y:auto;background:linear-gradient(155deg,#18202c,#0d121a);border:1px solid #3b495e;border-radius:11px;padding:15px;box-shadow:0 20px 50px rgba(0,0,0,0.75)}
+.wiki-modal-top{display:flex;align-items:center;gap:12px;padding-bottom:11px;border-bottom:1px solid var(--line)}
+.wiki-modal-icon{width:54px;height:54px;border-radius:8px;background:#090c12;border:2px solid #3b495e;object-fit:contain;flex-shrink:0;padding:3px}
+.wiki-modal-title{font-size:15px;font-weight:800;color:#fff;line-height:1.25}
+.wiki-modal-sub{font-size:11px;color:var(--muted);margin-top:3px;display:flex;flex-wrap:wrap;gap:5px}
+.wiki-desc{margin-top:12px;font-size:12.5px;line-height:1.55;color:#e2e8f0;background:#0b0f16;border:1px solid #242e3d;border-radius:8px;padding:11px 12px}
+.wiki-desc ul{margin:6px 0 6px 18px;padding:0}
+.wiki-desc li{margin-bottom:4px}
+.wiki-tunable{color:#fbbf24;font-weight:800}
+.wiki-keyword{color:#60a5fa;font-weight:700}
+.wiki-input{color:#34d399;font-weight:700}
 
 /* Footer */
-.footer{display:flex;gap:7px;margin-top:12px;flex-wrap:wrap}
-.footer button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:11px;padding:7px 10px;transition:all .15s ease}
-.footer button svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
-.state{padding:24px;text-align:center;color:var(--muted)}
-.date-filter{display:flex;gap:6px;align-items:end;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);padding:8px;border-radius:7px;margin-bottom:10px}
-.date-filter label{display:flex;flex-direction:column;gap:3px;color:var(--muted);font-size:9px;flex:1;min-width:120px}
-.date-filter input{background:#0d1219;border:1px solid var(--line);border-radius:4px;color:var(--text);padding:5px;font:inherit}
-.date-filter button{font-size:10px;height:27px}
+.footer{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.footer button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:700;font-size:12px;padding:8px 12px;transition:all .15s ease}
+.footer button svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.state{padding:24px;text-align:center;color:var(--muted);font-size:12.5px}
+.date-filter{display:flex;gap:8px;align-items:end;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);padding:10px;border-radius:8px;margin-bottom:10px}
+.date-filter label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:10.5px;font-weight:600;flex:1;min-width:120px}
+.date-filter input{background:#0c1017;border:1px solid var(--line);border-radius:5px;color:var(--text);padding:6px 8px;font-size:12px}
+.date-filter button{font-size:11px;height:30px;padding:0 10px}
 
 /* Status dot na titlebar */
 .status-dot{width:8px;height:8px;border-radius:50%;background:#ec3c3c;margin-left:8px;flex-shrink:0;transition:background .4s,box-shadow .4s;cursor:default}
@@ -574,7 +597,7 @@ h2:first-child{margin-top:2px}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
             <span style="font-size:10px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; color:var(--text);">Atualizações do Software (GitHub)</span>
           </div>
-          <span id="updater-version-badge" style="font-size:9px; font-weight:700; background:#1f2937; color:#9ca3af; padding:2px 6px; border-radius:4px;">v1.2.3</span>
+          <span id="updater-version-badge" style="font-size:9px; font-weight:700; background:#1f2937; color:#9ca3af; padding:2px 6px; border-radius:4px;">v1.2.4</span>
         </div>
         <div style="border-top:1px solid var(--line); padding-top:8px; display:flex; flex-direction:column; gap:8px;">
           <div id="updater-status-text" style="font-size:10px; color:var(--muted);">Verificação automática ativada via GitHub Releases.</div>
@@ -662,6 +685,11 @@ h2:first-child{margin-top:2px}
       </div>
     </div>
   </div>
+
+  <!-- WIKI ENCYCLOPEDIA MODAL (PERKS, ADD-ONS, ITEMS, OFFERINGS) -->
+  <div id="wiki-modal-backdrop" class="wiki-modal-backdrop" onclick="if(event.target===this)closeWikiModal()">
+    <div class="wiki-modal" id="wiki-modal-content"></div>
+  </div>
 </div>
 
 <script>
@@ -677,6 +705,218 @@ var addonImages = {};
 var offeringImages = {};
 var mapImages = {};
 var communityOfficialEmail = null;
+
+// Wiki Encyclopedia state (loaded from /api/wiki)
+var wikiData = { perks: {}, addons: {}, items: {}, offerings: {}, characters: {} };
+var wikiIndex = { perk: {}, addon: {}, item: {}, offering: {}, any: {} };
+var wikiLoaded = false;
+
+function slugifyWiki(str) {
+  return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+}
+
+function indexWikiCatalog(data) {
+  wikiData = data || { perks: {}, addons: {}, items: {}, offerings: {}, characters: {} };
+  wikiIndex = { perk: {}, addon: {}, item: {}, offering: {}, any: {} };
+  var groups = [
+    ['perk', wikiData.perks || {}],
+    ['addon', wikiData.addons || {}],
+    ['item', wikiData.items || {}],
+    ['offering', wikiData.offerings || {}]
+  ];
+  groups.forEach(function(pair) {
+    var kind = pair[0];
+    var dict = pair[1];
+    Object.keys(dict).forEach(function(id) {
+      var entry = dict[id];
+      if (!entry) return;
+      var kId = String(id).toLowerCase();
+      var kName = String(entry.name || '').toLowerCase();
+      var sId = slugifyWiki(id);
+      var sName = slugifyWiki(entry.name || '');
+      wikiIndex[kind][kId] = entry;
+      if (kName) wikiIndex[kind][kName] = entry;
+      if (sId) wikiIndex[kind][sId] = entry;
+      if (sName) wikiIndex[kind][sName] = entry;
+      wikiIndex.any[kId] = entry;
+      if (kName) wikiIndex.any[kName] = entry;
+      if (sId) wikiIndex.any[sId] = entry;
+      if (sName) wikiIndex.any[sName] = entry;
+    });
+  });
+}
+
+function lookupWikiItem(kind, rawNameOrId) {
+  if (!rawNameOrId) return null;
+  var raw = String(rawNameOrId).trim();
+  var lower = raw.toLowerCase();
+  var slug = slugifyWiki(raw);
+  var bucket = (kind && wikiIndex[kind]) ? wikiIndex[kind] : wikiIndex.any;
+  return bucket[lower] || bucket[slug] || wikiIndex.any[lower] || wikiIndex.any[slug] || null;
+}
+
+function cleanFallbackName(raw) {
+  var s = String(raw || '');
+  s = s.replace(/^(Addon_[A-Za-z0-9]+_|ADDON_[A-Za-z0-9]+_|Item_Camper_|Item_Slasher_|Camper_|Slasher_)/, '');
+  return s.replace(/_/g, ' ');
+}
+
+function displayWikiName(kind, rawNameOrId) {
+  var entry = lookupWikiItem(kind, rawNameOrId);
+  if (entry && entry.name) return entry.name;
+  return cleanFallbackName(rawNameOrId);
+}
+
+function resolveAssetImage(kind, rawNameOrId, primaryMap) {
+  if (!rawNameOrId) return null;
+  if (primaryMap && primaryMap[rawNameOrId]) return primaryMap[rawNameOrId];
+  var entry = lookupWikiItem(kind, rawNameOrId);
+  if (entry) {
+    if (primaryMap && entry.name && primaryMap[entry.name]) return primaryMap[entry.name];
+    if (primaryMap && entry.id && primaryMap[entry.id]) return primaryMap[entry.id];
+    if (entry.image) return entry.image;
+  }
+  return null;
+}
+
+function loadWikiCatalog() {
+  return get('/wiki').then(function(data) {
+    if (data && data.perks) {
+      indexWikiCatalog(data);
+      wikiLoaded = Object.keys(data.perks).length > 0;
+      if (!wikiLoaded) {
+        setTimeout(function() {
+          get('/wiki?refresh=true').then(function(fresh) {
+            if (fresh && fresh.perks) {
+              indexWikiCatalog(fresh);
+              wikiLoaded = Object.keys(fresh.perks).length > 0;
+              renderMatches();
+            }
+          }).catch(function() {});
+        }, 2500);
+      }
+    }
+  }).catch(function() {});
+}
+
+var rarityLabels = {
+  common: 'Comum',
+  uncommon: 'Incomum',
+  rare: 'Raro',
+  veryrare: 'Muito Raro',
+  ultrarare: 'Ultra Raro',
+  visceral: 'Visceral',
+  event: 'Evento'
+};
+
+var kindLabels = {
+  perk: 'Perk',
+  addon: 'Add-on (Complemento)',
+  item: 'Item',
+  offering: 'Oferenda'
+};
+
+window.closeWikiModal = function() {
+  var bd = $('wiki-modal-backdrop');
+  if (bd) bd.classList.remove('open');
+};
+
+window.openWikiModal = function(kind, rawNameOrId) {
+  var bd = $('wiki-modal-backdrop');
+  var box = $('wiki-modal-content');
+  if (!bd || !box || !rawNameOrId) return;
+
+  var entry = lookupWikiItem(kind, rawNameOrId);
+  var resolvedKind = (entry && entry.kind) || kind || 'perk';
+  var title = (entry && entry.name) || cleanFallbackName(rawNameOrId);
+  var mapByKind = resolvedKind === 'addon' ? addonImages : resolvedKind === 'item' ? itemImages : resolvedKind === 'offering' ? offeringImages : perkImages;
+  var img = resolveAssetImage(resolvedKind, rawNameOrId, mapByKind);
+  var rarity = (entry && entry.rarity) ? String(entry.rarity).toLowerCase() : '';
+  var rarityClass = rarity ? ('rarity-' + rarity) : '';
+
+  // Compute user's personal stats with this item across allMatchData
+  var targetLower = String(rawNameOrId).toLowerCase();
+  var titleLower = String(title).toLowerCase();
+  var matchesWithItem = (allMatchData || []).filter(function(m) {
+    var list = [];
+    if (resolvedKind === 'perk') {
+      list = ((m.loadout && m.loadout.perks) || []).concat((m.killer_info && m.killer_info.perks) || []);
+      (m.participants || []).forEach(function(p) { list = list.concat(p.perks || []); });
+    } else if (resolvedKind === 'addon') {
+      list = ((m.loadout && m.loadout.addons) || []).concat((m.killer_info && m.killer_info.addons) || []);
+      (m.participants || []).forEach(function(p) { list = list.concat(p.addons || []); });
+    } else if (resolvedKind === 'item') {
+      if (m.loadout && m.loadout.item) list.push(m.loadout.item);
+      (m.participants || []).forEach(function(p) { if (p.item) list.push(p.item); });
+    } else if (resolvedKind === 'offering') {
+      if (m.loadout && m.loadout.offering) list.push(m.loadout.offering);
+      if (m.killer_info && m.killer_info.offering) list.push(m.killer_info.offering);
+      (m.participants || []).forEach(function(p) { if (p.offering) list.push(p.offering); });
+    }
+    return list.some(function(x) {
+      var xl = String(x || '').toLowerCase();
+      return xl === targetLower || xl === titleLower || displayWikiName(resolvedKind, x).toLowerCase() === titleLower;
+    });
+  });
+
+  var survM = matchesWithItem.filter(function(m) { return m.role === 'survivor'; });
+  var killM = matchesWithItem.filter(function(m) { return m.role === 'killer'; });
+  var survEsc = survM.filter(function(m) { return /escape|win|fugiu/i.test(m.result || ''); }).length;
+  var killW = killM.filter(isMatchWin).length;
+
+  var badges = [];
+  badges.push('<span class="bar-badge">' + esc(kindLabels[resolvedKind] || resolvedKind) + '</span>');
+  if (entry && entry.role && entry.role !== 'shared') {
+    badges.push('<span class="bar-badge">' + (entry.role === 'killer' ? 'Killer' : 'Survivor') + '</span>');
+  }
+  if (entry && entry.owner) {
+    badges.push('<span class="bar-badge">Personagem: ' + esc(entry.owner) + '</span>');
+  }
+  if (rarity && rarityLabels[rarity]) {
+    badges.push('<span class="bar-badge">' + esc(rarityLabels[rarity]) + '</span>');
+  }
+
+  var descHtml = (entry && entry.description)
+    ? entry.description
+    : '<span style="color:var(--muted)">Descrição detalhada não encontrada no catálogo para <b>' + esc(rawNameOrId) + '</b>.</span>';
+
+  box.innerHTML =
+    '<div class="wiki-modal-top">' +
+      (img ? '<img class="wiki-modal-icon ' + esc(rarityClass) + '" src="' + esc(img) + '" alt="' + esc(title) + '">' : '<div class="perk-icon-fallback ' + esc(rarityClass) + '" style="width:54px;height:54px;font-size:13px;">' + esc(title.slice(0, 3).toUpperCase()) + '</div>') +
+      '<div style="flex:1;min-width:0;">' +
+        '<div class="wiki-modal-title">' + esc(title) + '</div>' +
+        '<div class="wiki-modal-sub">' + badges.join('') + '</div>' +
+      '</div>' +
+      '<button onclick="closeWikiModal()" style="padding:4px 9px;font-size:13px;" title="Fechar">✕</button>' +
+    '</div>' +
+    '<div class="wiki-desc">' + descHtml + '</div>' +
+    '<div class="inspector-grid" style="grid-template-columns:repeat(3,1fr);margin-top:12px;margin-bottom:10px;">' +
+      '<div class="inspector-stat"><span>Partidas Salvas</span><b>' + matchesWithItem.length + '</b></div>' +
+      '<div class="inspector-stat"><span>Fuga Survivor</span><b class="good">' + (survM.length ? Math.round((survEsc * 100) / survM.length) + '% (' + survM.length + 'p)' : '-') + '</b></div>' +
+      '<div class="inspector-stat"><span>Winrate Killer</span><b>' + (killM.length ? Math.round((killW * 100) / killM.length) + '% (' + killM.length + 'p)' : '-') + '</b></div>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+      '<button style="background:var(--red);border-color:var(--red);color:#fff;font-weight:700;width:100%;padding:8px;" id="btn-wiki-jump">Filtrar ' + matchesWithItem.length + ' partida(s) com ' + esc(title) + ' →</button>' +
+    '</div>';
+
+  var jumpBtn = $('btn-wiki-jump');
+  if (jumpBtn) {
+    jumpBtn.onclick = function() {
+      closeWikiModal();
+      jumpToMatchesFilter(rawNameOrId, 'all');
+    };
+  }
+
+  bd.classList.add('open');
+};
+
+document.addEventListener('click', function(e) {
+  var wikiEl = e.target.closest('[data-wiki-kind]');
+  if (wikiEl) {
+    e.stopPropagation();
+    openWikiModal(wikiEl.getAttribute('data-wiki-kind'), wikiEl.getAttribute('data-wiki-id'));
+  }
+});
 
 function get(path) {
   return fetch(api + path).then(function(r) {
@@ -791,6 +1031,11 @@ function buildBarSub(x, key) {
     if (x.average_kills != null) {
       badges.push('Média: ' + x.average_kills + 'K');
     }
+  } else if (key === 'perk') {
+    var wikiPerk = lookupWikiItem('perk', x.perk);
+    if (wikiPerk && wikiPerk.owner) {
+      badges.push('Personagem: ' + wikiPerk.owner);
+    }
   }
   if (!badges.length) return '';
   return '<div class="bar-sub">' + badges.map(function(b) { return '<span class="bar-badge">' + esc(b) + '</span>'; }).join('') + '</div>';
@@ -804,17 +1049,19 @@ function bars(id, rows, key, initialLimit) {
   var visibleRows = expanded ? rows : rows.slice(0, limit);
   el.innerHTML = visibleRows.map(function(x) {
     var val = x[key];
+    var displayVal = key === 'perk' ? displayWikiName('perk', val) : val;
+    var img = x.image || (key === 'perk' ? resolveAssetImage('perk', val, perkImages) : null);
     var suffix = '';
     if (x.winrate !== undefined && x.winrate !== null) {
       suffix = ' (' + x.winrate + '%WR)';
     } else if (x.average_kills !== undefined && x.average_kills !== null) {
       suffix = ' (' + x.average_kills + 'K)';
     }
-    var name = val + suffix;
+    var name = displayVal + suffix;
     var isSelected = activeInspect && activeInspect.key === key && activeInspect.value === val;
-    return '<div class="bar clickable' + (isSelected ? ' active-inspect' : '') + '" data-inspect-key="' + esc(key) + '" data-inspect-val="' + esc(val) + '" title="Clique para ver detalhes de ' + esc(val) + '">' +
+    return '<div class="bar clickable' + (isSelected ? ' active-inspect' : '') + '" data-inspect-key="' + esc(key) + '" data-inspect-val="' + esc(val) + '" title="Clique para inspecionar ' + esc(displayVal) + '">' +
       '<div class="bar-top"><span class="bar-name">' +
-      (x.image ? '<img class="thumb" src="' + esc(x.image) + '" title="' + esc(val) + '">' : '') +
+      (img ? '<img class="thumb" src="' + esc(img) + '" title="' + esc(displayVal) + '">' : '') +
       '<span>' + esc(name) + '</span></span><small>' + x.count + ' &nbsp;' + x.pct + '%</small></div>' +
       buildBarSub(x, key) +
       '<div class="track"><div class="fill" style="width:' + Math.max(2, x.pct) + '%"></div></div></div>';
@@ -857,11 +1104,18 @@ function matchHasItem(m, key, val) {
     return (m.participants || []).some(function(p) { return String(p.character || '').toLowerCase() === target; });
   }
   if (key === 'perk') {
+    var targetTitle = displayWikiName('perk', val).toLowerCase();
     var own = (m.loadout && m.loadout.perks) || [];
     var kil = (m.killer_info && m.killer_info.perks) || [];
-    if (own.concat(kil).some(function(p) { return String(p || '').toLowerCase() === target; })) return true;
+    if (own.concat(kil).some(function(p) {
+      var pl = String(p || '').toLowerCase();
+      return pl === target || pl === targetTitle || displayWikiName('perk', p).toLowerCase() === targetTitle;
+    })) return true;
     return (m.participants || []).some(function(part) {
-      return (part.perks || []).some(function(p) { return String(p || '').toLowerCase() === target; });
+      return (part.perks || []).some(function(p) {
+        var pl = String(p || '').toLowerCase();
+        return pl === target || pl === targetTitle || displayWikiName('perk', p).toLowerCase() === targetTitle;
+      });
     });
   }
   return false;
@@ -898,7 +1152,6 @@ function inspectItem(key, val) {
   var totalBp = filtered.reduce(function(s, m) { return s + (Number(m.score) || 0); }, 0);
   var avgBp = filtered.length ? Math.round(totalBp / filtered.length) : 0;
 
-  // Top Sub-associações (ex: em qual mapa mais ocorre ou qual killer mais aparece)
   var assocMap = {};
   var assocLabel = key === 'map' ? 'Killers mais enfrentados neste mapa' : 'Mapas mais frequentes';
   filtered.forEach(function(m) {
@@ -909,23 +1162,33 @@ function inspectItem(key, val) {
   });
   var topAssoc = Object.entries(assocMap).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 4);
 
+  var wikiEntry = key === 'perk' ? lookupWikiItem('perk', val) : null;
+  var displayTitle = wikiEntry ? wikiEntry.name : val;
+  var perkDescBlock = (wikiEntry && wikiEntry.description)
+    ? '<div class="wiki-desc" style="margin-top:0;margin-bottom:10px;">' +
+        (wikiEntry.owner ? '<div style="font-size:10.5px;color:var(--muted);margin-bottom:5px;">Perk ensinável de <b style="color:#fff;">' + esc(wikiEntry.owner) + '</b></div>' : '') +
+        wikiEntry.description +
+      '</div>'
+    : '';
+
   var typeNames = { map: 'Mapa', killer: 'Killer', character: 'Personagem', perk: 'Perk' };
   box.innerHTML =
     '<div class="inspector-header">' +
-      '<div><span style="font-size:9px;text-transform:uppercase;color:var(--red);font-weight:700;letter-spacing:.08em;">Raio-X de ' + esc(typeNames[key] || key) + '</span>' +
-      '<div style="font-size:13px;font-weight:800;color:var(--text);">' + esc(val) + '</div></div>' +
+      '<div><span style="font-size:10px;text-transform:uppercase;color:var(--red);font-weight:800;letter-spacing:.08em;">Raio-X de ' + esc(typeNames[key] || key) + '</span>' +
+      '<div style="font-size:15px;font-weight:800;color:var(--text);">' + esc(displayTitle) + '</div></div>' +
       '<div style="display:flex;gap:6px;align-items:center;">' +
-        '<button style="font-size:10px;padding:4px 8px;background:var(--red);border-color:var(--red);color:#fff;font-weight:700;" data-jump-val="' + esc(val) + '">Ver ' + filtered.length + ' partida(s)</button>' +
-        '<button style="font-size:11px;padding:3px 7px;" onclick="closeInspector()" title="Fechar">✕</button>' +
+        '<button style="font-size:11px;padding:5px 10px;background:var(--red);border-color:var(--red);color:#fff;font-weight:700;" data-jump-val="' + esc(val) + '">Ver ' + filtered.length + ' partida(s)</button>' +
+        '<button style="font-size:12px;padding:4px 8px;" onclick="closeInspector()" title="Fechar">✕</button>' +
       '</div>' +
     '</div>' +
+    perkDescBlock +
     '<div class="inspector-grid">' +
       '<div class="inspector-stat"><span>Suas Partidas</span><b>' + filtered.length + '</b></div>' +
       '<div class="inspector-stat"><span>Como Survivor</span><b class="good">' + (survMatches.length ? Math.round((survEscapes * 100) / survMatches.length) + '% Fuga (' + survMatches.length + 'p)' : '-') + '</b></div>' +
       '<div class="inspector-stat"><span>Como Killer</span><b>' + (killerMatches.length ? Math.round((killerWins * 100) / killerMatches.length) + '% WR (' + killerMatches.length + 'p)' : '-') + '</b></div>' +
       '<div class="inspector-stat"><span>Média BP</span><b>' + fmt(avgBp) + '</b></div>' +
     '</div>' +
-    (topAssoc.length ? '<div style="font-size:9px;color:var(--muted);margin-bottom:4px;">' + esc(assocLabel) + ':</div><div class="bar-sub">' +
+    (topAssoc.length ? '<div style="font-size:10.5px;color:var(--muted);margin-bottom:4px;">' + esc(assocLabel) + ':</div><div class="bar-sub">' +
       topAssoc.map(function(pair) { return '<span class="bar-badge">' + esc(pair[0]) + ' (' + pair[1] + 'x)</span>'; }).join('') +
     '</div>' : '');
 
@@ -1002,36 +1265,31 @@ function characterSection(id, titleId, cardId, rows, role) {
   }
 }
 
-function buildAssetIcons(names, imageMap, label) {
-  if (!names || !names.length) return '<span style="color:var(--muted);font-size:9px">Nenhum</span>';
+function buildSingleWikiIcon(kind, rawName, imageMap) {
+  if (!rawName) return '';
+  var entry = lookupWikiItem(kind, rawName);
+  var displayName = (entry && entry.name) || cleanFallbackName(rawName);
+  var rarity = (entry && entry.rarity) ? ('rarity-' + String(entry.rarity).toLowerCase()) : '';
+  var img = resolveAssetImage(kind, rawName, imageMap);
+  var tooltip = displayName + ' — Clique para ver o que faz';
+  if (img) {
+    return '<img class="perk-icon ' + esc(rarity) + '" data-wiki-kind="' + esc(kind) + '" data-wiki-id="' + esc(rawName) + '" src="' + esc(img) + '" title="' + esc(tooltip) + '" alt="' + esc(displayName) + '">';
+  }
+  var abbr = displayName.split(' ').map(function(w) { return w[0] || ''; }).join('').slice(0, 3).toUpperCase();
+  return '<div class="perk-icon-fallback ' + esc(rarity) + '" data-wiki-kind="' + esc(kind) + '" data-wiki-id="' + esc(rawName) + '" title="' + esc(tooltip) + '">' + esc(abbr) + '</div>';
+}
+
+function buildAssetIcons(names, imageMap, kind) {
+  if (!names || !names.length) return '<span style="color:var(--muted);font-size:10.5px">Nenhum</span>';
   return '<div class="perk-icons">' + names.map(function(n) {
-    var img = imageMap[n];
-    if (img) {
-      return '<img class="perk-icon" src="' + esc(img) + '" title="' + esc(n) + '" alt="' + esc(n) + '">';
-    }
-    var abbr = n.split(' ').map(function(w) { return w[0] || ''; }).join('').slice(0, 3).toUpperCase();
-    return '<div class="perk-icon-fallback" title="' + esc(n) + '">' + esc(abbr) + '</div>';
+    return buildSingleWikiIcon(kind, n, imageMap);
   }).join('') + '</div>';
 }
 
-function buildPerkIcons(perks) { return buildAssetIcons(perks, perkImages, 'PERKS'); }
-function buildAddonIcons(addons) { return buildAssetIcons(addons, addonImages, 'ADD-ONS'); }
-function buildItemIcon(item) {
-  if (!item) return '';
-  var img = itemImages[item];
-  var icon = img
-    ? '<img class="perk-icon" src="' + esc(img) + '" title="' + esc(item) + '" alt="' + esc(item) + '">'
-    : '<div class="perk-icon-fallback" title="' + esc(item) + '">' + esc(item.slice(0,3).toUpperCase()) + '</div>';
-  return icon;
-}
-function buildOfferingIcon(offering) {
-  if (!offering) return '';
-  var img = offeringImages[offering];
-  var icon = img
-    ? '<img class="perk-icon" src="' + esc(img) + '" title="' + esc(offering) + '" alt="' + esc(offering) + '">'
-    : '<div class="perk-icon-fallback" title="' + esc(offering) + '">' + esc(offering.slice(0,3).toUpperCase()) + '</div>';
-  return icon;
-}
+function buildPerkIcons(perks) { return buildAssetIcons(perks, perkImages, 'perk'); }
+function buildAddonIcons(addons) { return buildAssetIcons(addons, addonImages, 'addon'); }
+function buildItemIcon(item) { return buildSingleWikiIcon('item', item, itemImages); }
+function buildOfferingIcon(offering) { return buildSingleWikiIcon('offering', offering, offeringImages); }
 
 function buildMatchDetail(x) {
   var isKiller = x.role === 'killer';
@@ -1039,59 +1297,59 @@ function buildMatchDetail(x) {
   var infoSection = '<div class="detail-section">' +
     '<h4>Partida</h4>' +
     '<div class="detail-row"><span>Dura\u00e7\u00e3o</span><b>' + fmtDur(x.duration_sec) + '</b></div>' +
-    '<div class="detail-row"><span>Role</span><b>' + esc(x.role) + '</b></div>' +
+    '<div class="detail-row"><span>Papel</span><b>' + esc(x.role === 'killer' ? 'Killer' : 'Survivor') + '</b></div>' +
     (x.map ? '<div class="detail-row"><span>Mapa</span><b>' + esc(x.map) + '</b></div>' : '') +
-    (x.map_realm ? '<div class="detail-row"><span>Realm</span><b>' + esc(x.map_realm) + '</b></div>' : '') +
+    (x.map_realm ? '<div class="detail-row"><span>Reino</span><b>' + esc(x.map_realm) + '</b></div>' : '') +
     (x.score ? '<div class="detail-row"><span>Bloodpoints</span><b>' + fmt(x.score) + '</b></div>' : '') +
     '</div>';
 
   var killerSection = '';
   if (x.killer_info) {
-    // Monta linha compacta: offering | perks
-    var kOfferingIcons = x.killer_info.offering ? buildOfferingIcon(x.killer_info.offering) : '';
-    var kCompact = kOfferingIcons ? '<div class="perk-label">OFFERING &nbsp; PERKS</div><div class="perk-icons">' + kOfferingIcons +
-      (x.killer_info.perks && x.killer_info.perks.length ? '<span class="icon-sep">|</span>' + x.killer_info.perks.map(function(p) {
-        var img = perkImages[p];
-        return img ? '<img class="perk-icon" src="' + esc(img) + '" title="' + esc(p) + '">' : '<div class="perk-icon-fallback" title="' + esc(p) + '">' + esc(p.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,3).toUpperCase()) + '</div>';
-      }).join('') : '') + '</div>' :
-      (x.killer_info.perks && x.killer_info.perks.length ? '<div class="perk-label">PERKS</div>' + buildPerkIcons(x.killer_info.perks) : '');
+    var kEquipIcons = '';
+    if (x.killer_info.addons && x.killer_info.addons.length) {
+      kEquipIcons += x.killer_info.addons.map(function(a) { return buildSingleWikiIcon('addon', a, addonImages); }).join('');
+    }
+    if (x.killer_info.offering) {
+      if (kEquipIcons) kEquipIcons += '<span class="icon-sep">|</span>';
+      kEquipIcons += buildOfferingIcon(x.killer_info.offering);
+    }
     killerSection = '<div class="detail-section"><h4>Killer</h4>' +
       (x.killer_info.killer ? '<div class="detail-row"><span>Personagem</span><b>' + esc(x.killer_info.killer) + '</b></div>' : '') +
-      (x.killer_info.kills_count != null ? '<div class="detail-row"><span>Kills</span><b>' + x.killer_info.kills_count + 'K</b></div>' : '') +
-      kCompact +
+      (x.killer_info.kills_count != null ? '<div class="detail-row"><span>Abates</span><b>' + x.killer_info.kills_count + 'K</b></div>' : '') +
+      (kEquipIcons ? '<div class="perk-label">ADD-ONS &bull; OFERENDA</div><div class="perk-icons">' + kEquipIcons + '</div>' : '') +
+      (x.killer_info.perks && x.killer_info.perks.length ? '<div class="perk-label">PERKS (CLIQUE P/ VER)</div>' + buildPerkIcons(x.killer_info.perks) : '') +
       '</div>';
   }
 
   var loadoutSection = '';
   if (x.loadout) {
-    // Linha compacta: item | addons | offering
     var hasCompact = x.loadout.item || (x.loadout.addons && x.loadout.addons.length) || x.loadout.offering;
     var compactIcons = '';
     if (x.loadout.item) compactIcons += buildItemIcon(x.loadout.item);
     if (x.loadout.addons && x.loadout.addons.length) {
       if (compactIcons) compactIcons += '<span class="icon-sep">|</span>';
-      compactIcons += buildAddonIcons(x.loadout.addons).replace('<div class="perk-icons">','').replace('</div>','');
+      compactIcons += x.loadout.addons.map(function(a) { return buildSingleWikiIcon('addon', a, addonImages); }).join('');
     }
     if (x.loadout.offering) {
       if (compactIcons) compactIcons += '<span class="icon-sep">|</span>';
       compactIcons += buildOfferingIcon(x.loadout.offering);
     }
-    loadoutSection = '<div class="detail-section"><h4>Meu loadout</h4>' +
-      (hasCompact ? '<div class="perk-label">ITEM &nbsp; ADD-ONS &nbsp; OFFERING</div><div class="perk-icons">' + compactIcons + '</div>' : '') +
-      (x.loadout.perks && x.loadout.perks.length ? '<div class="perk-label">PERKS</div>' + buildPerkIcons(x.loadout.perks) : '') +
+    loadoutSection = '<div class="detail-section"><h4>Meu Loadout</h4>' +
+      (hasCompact ? '<div class="perk-label">ITEM &bull; ADD-ONS &bull; OFERENDA</div><div class="perk-icons">' + compactIcons + '</div>' : '') +
+      (x.loadout.perks && x.loadout.perks.length ? '<div class="perk-label">PERKS (CLIQUE P/ VER)</div>' + buildPerkIcons(x.loadout.perks) : '') +
       '</div>';
   }
 
   var participantsSection = '';
   if (x.participants && x.participants.length) {
-    participantsSection = '<div class="detail-section detail-full"><h4>Participantes (' + x.participants.length + ')</h4>' +
+    participantsSection = '<div class="detail-section detail-full"><h4>Participantes (' + x.participants.length + ') — Clique nas Perks ou Add-ons para ver o efeito</h4>' +
       x.participants.map(function(p) {
         return '<div class="participant-row">' +
           (p.character_image ? '<img class="char-img-sm" src="' + esc(p.character_image) + '" title="' + esc(p.character) + '">' : '') +
-          '<span>' + esc(p.character || '?') + '</span>' +
+          '<b style="color:#f1f5f9;">' + esc(p.character || '?') + '</b>' +
           '<span class="participant-role">' + esc(p.role) + '</span>' +
           (p.result ? '<span class="participant-result ' + resultClass(p.result) + '">' + esc(p.result) + '</span>' : '') +
-          (p.score ? '<span style="color:var(--muted);font-size:9px;margin-left:4px">' + fmt(p.score) + ' bp</span>' : '') +
+          (p.score ? '<span style="color:var(--muted);font-size:11px;margin-left:4px">' + fmt(p.score) + ' bp</span>' : '') +
           (p.perks && p.perks.length ? '<div style="margin-left:auto">' + buildPerkIcons(p.perks) + '</div>' : '') +
           '</div>';
       }).join('') + '</div>';
@@ -1109,6 +1367,9 @@ var matchData = [];
 var allMatchData = [];
 var openMatchIds = new Set();
 var matchesContainerBound = false;
+var matchesRenderLimit = 30;
+var lastMatchesSignature = '';
+var searchDebounceTimer = null;
 
 function getMatchKey(x, i) {
   if (!x) return 'idx-' + i;
@@ -1122,18 +1383,16 @@ function renderMatches() {
   var container = $('matches');
   if (!container) return;
   if (!matchData.length) {
-    container.innerHTML = '<div class="state">Nenhuma partida coletada.</div>';
+    container.innerHTML = '<div class="state">Nenhuma partida encontrada para este filtro.</div>';
     return;
   }
 
-  // Preserve any currently open match from DOM
   container.querySelectorAll('.match.open').forEach(function(el) {
     if (el.dataset.matchId) {
       openMatchIds.add(el.dataset.matchId);
     }
   });
 
-  // Clean up any old match IDs no longer in list to keep Set lean
   var currentIds = new Set(matchData.map(function(x, i) { return getMatchKey(x, i); }));
   openMatchIds.forEach(function(id) {
     if (!currentIds.has(id)) openMatchIds.delete(id);
@@ -1142,7 +1401,8 @@ function renderMatches() {
   var scrollParent = container.closest('.content');
   var prevScrollTop = scrollParent ? scrollParent.scrollTop : 0;
 
-  container.innerHTML = matchData.map(function(x, i) {
+  var visibleMatches = matchData.slice(0, matchesRenderLimit);
+  var html = visibleMatches.map(function(x, i) {
     var matchKey = getMatchKey(x, i);
     var isOpen = openMatchIds.has(matchKey);
     var openClasses = isOpen ? ' open no-anim' : '';
@@ -1151,15 +1411,30 @@ function renderMatches() {
       : '<div class="match-char-blank"></div>';
     var date = new Date(x.played_at).toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
     var roleTag = x.role === 'killer'
-      ? '<span style="font-size:8px;color:#ec8c3c;margin-left:4px">KILLER</span>'
-      : '<span style="font-size:8px;color:#50d28f;margin-left:4px">SURV</span>';
+      ? '<span class="bar-badge" style="color:#fb923c;border-color:#7c2d12;font-size:9px;padding:1px 5px;">KILLER</span>'
+      : '<span class="bar-badge" style="color:#4ade80;border-color:#14532d;font-size:9px;padding:1px 5px;">SURV</span>';
     return '<div class="match' + openClasses + '" data-idx="' + i + '" data-match-id="' + esc(matchKey) + '">' +
       charImg +
-      '<div><b>' + esc(x.character || '?') + '</b>' + roleTag + '<br><small>' + esc(x.map || '?') + ' &bull; ' + date + '</small></div>' +
+      '<div><div class="match-title"><span>' + esc(x.character || '?') + '</span>' + roleTag + '</div><small>' + esc(x.map || '?') + ' &bull; ' + date + '</small></div>' +
       '<div class="match-right"><span class="result ' + resultClass(x.result) + '">' + esc(x.result) + '</span><br><small>' + fmt(x.score) + ' bp</small><span class="match-chevron"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg></span></div>' +
       buildMatchDetail(x) +
       '</div>';
   }).join('');
+
+  if (matchData.length > matchesRenderLimit) {
+    var remaining = matchData.length - matchesRenderLimit;
+    html += '<button id="btn-load-more-matches" class="bars-toggle" style="padding:10px;font-size:12px;margin-top:4px;margin-bottom:8px;">Mostrar mais partidas (+' + Math.min(40, remaining) + ' &mdash; exibindo ' + visibleMatches.length + ' de ' + matchData.length + ')</button>';
+  }
+
+  container.innerHTML = html;
+
+  var loadMoreBtn = $('btn-load-more-matches');
+  if (loadMoreBtn) {
+    loadMoreBtn.onclick = function() {
+      matchesRenderLimit += 40;
+      renderMatches();
+    };
+  }
 
   if (scrollParent && prevScrollTop > 0) {
     scrollParent.scrollTop = prevScrollTop;
@@ -1168,6 +1443,7 @@ function renderMatches() {
   if (!matchesContainerBound) {
     matchesContainerBound = true;
     container.addEventListener('click', function(e) {
+      if (e.target.closest('[data-wiki-kind]')) return;
       if (e.target.closest('.match-detail')) return;
       var card = e.target.closest('.match');
       if (!card || !container.contains(card)) return;
@@ -1202,7 +1478,8 @@ function renderMatchesSummary(list) {
     '<div class="filter-summary-item"><span>Média BP</span><b>' + fmt(avgBp) + '</b></div>';
 }
 
-function filterMatchesByDate() {
+function filterMatchesByDate(keepLimit) {
+  if (!keepLimit) matchesRenderLimit = 30;
   var fromText = ($('matches-date-from') && $('matches-date-from').value || '').trim();
   var toText = ($('matches-date-to') && $('matches-date-to').value || '').trim();
   var searchText = ($('matches-search') && $('matches-search').value || '').trim().toLowerCase();
@@ -1223,6 +1500,8 @@ function filterMatchesByDate() {
       if (matchResultFilter === 'loss' && win) return false;
     }
     if (searchText) {
+      var rawPerks = ((match.loadout && match.loadout.perks) || []).concat((match.killer_info && match.killer_info.perks) || []);
+      var rawAddons = ((match.loadout && match.loadout.addons) || []).concat((match.killer_info && match.killer_info.addons) || []);
       var hay = [
         match.character,
         match.map,
@@ -1230,10 +1509,14 @@ function filterMatchesByDate() {
         match.result,
         match.killer_info && match.killer_info.killer,
         match.loadout && match.loadout.item,
-        match.loadout && match.loadout.offering
+        match.loadout && displayWikiName('item', match.loadout.item),
+        match.loadout && match.loadout.offering,
+        match.loadout && displayWikiName('offering', match.loadout.offering)
       ]
-        .concat((match.loadout && match.loadout.perks) || [])
-        .concat((match.killer_info && match.killer_info.perks) || [])
+        .concat(rawPerks)
+        .concat(rawPerks.map(function(p) { return displayWikiName('perk', p); }))
+        .concat(rawAddons)
+        .concat(rawAddons.map(function(a) { return displayWikiName('addon', a); }))
         .concat((match.participants || []).map(function(p) { return p.character; }))
         .filter(Boolean)
         .join(' ')
@@ -1279,6 +1562,9 @@ var trendsGlobal = false;
 
 async function load() {
   try {
+    if (!wikiLoaded) {
+      loadWikiCatalog();
+    }
     var trendsQuerySuffix = trendsGlobal ? '?global=true' : '';
     var periodParam = 'period=' + encodeURIComponent(statsPeriod);
     var communityPromise = trendsGlobal ? window.dbd.communityStats() : Promise.resolve(null);
@@ -1348,7 +1634,6 @@ async function load() {
     addonImages    = (allAssets && allAssets.addons)    || {};
     offeringImages = (allAssets && allAssets.offerings) || {};
     mapImages      = (allAssets && allAssets.maps)      || {};
-    // Adiciona TODAS as perks do catálogo ao perkImages para cobrir perks que não estão no ranking
     var catalogPerks = (allAssets && allAssets.perks) || {};
     for (var pName in catalogPerks) {
       if (!perkImages[pName]) perkImages[pName] = catalogPerks[pName];
@@ -1362,8 +1647,8 @@ async function load() {
 
     // Page 1
     $('total').textContent = fmt(o.total_matches);
-    $('escape').innerHTML = o.survivor_winrate + '% <span style="font-size:10px;font-weight:normal;color:var(--muted)">(' + o.survivor_stats + ')</span>';
-    $('fourk').innerHTML = o.killer_winrate + '% <span style="font-size:10px;font-weight:normal;color:var(--muted)">(' + o.killer_stats + ')</span>';
+    $('escape').innerHTML = o.survivor_winrate + '% <span style="font-size:11px;font-weight:normal;color:var(--muted)">(' + o.survivor_stats + ')</span>';
+    $('fourk').innerHTML = o.killer_winrate + '% <span style="font-size:11px;font-weight:normal;color:var(--muted)">(' + o.killer_stats + ')</span>';
     $('score').textContent = fmt(o.average_score);
     globalSection('globalStats', sections, 'general');
     globalSection('globalSurvivorStats', sections, 'survivors');
@@ -1381,9 +1666,13 @@ async function load() {
     bars('killers', k, 'killer', 4);
     bars('maps', m, 'map', 4);
 
-    // Page 3
-    allMatchData = recent;
-    filterMatchesByDate();
+    // Page 3 — only rebuild matches DOM if the dataset changed
+    allMatchData = recent || [];
+    var newSig = allMatchData.length + ':' + (allMatchData[0] ? getMatchKey(allMatchData[0], 0) : '');
+    if (newSig !== lastMatchesSignature || !matchData.length) {
+      lastMatchesSignature = newSig;
+      filterMatchesByDate(true);
+    }
 
     $('error').hidden = true;
   } catch(e) {
@@ -1779,8 +2068,11 @@ $('matches-date-from').value = localStorage.getItem('matches-date-from') || '';
 $('matches-date-to').value = localStorage.getItem('matches-date-to') || '';
 if ($('matches-search')) {
   $('matches-search').value = localStorage.getItem('matches-search') || '';
-  $('matches-search').oninput = filterMatchesByDate;
-  $('matches-search').onchange = filterMatchesByDate;
+  $('matches-search').oninput = function() {
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(function() { filterMatchesByDate(); }, 120);
+  };
+  $('matches-search').onchange = function() { filterMatchesByDate(); };
 }
 $('matches-date-from').oninput = filterMatchesByDate;
 $('matches-date-to').oninput = filterMatchesByDate;

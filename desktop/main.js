@@ -16,6 +16,7 @@ import { startServer } from "./server.js";
 import { createBackgroundCollector } from "./background-collector.js";
 import { createCommunityAuth, ensureAnonymousCommunitySession, linkRecoveryEmailDirect, uploadAllCommunityMatches } from "./community.js";
 import { createAutoUpdater } from "./updater.js";
+import { createWikiCatalog } from "./wiki-catalog.js";
 
 function loadCommunityConfig() {
   try {
@@ -40,7 +41,7 @@ if (process.platform === "win32") {
   app.commandLine.appendSwitch("disable-software-rasterizer");
   app.commandLine.appendSwitch("wm-window-animations-disabled");
 }
-app.commandLine.appendSwitch("js-flags", "--max-old-space-size=64 --lite-mode");
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=192");
 app.commandLine.appendSwitch("disable-site-isolation-trials");
 app.commandLine.appendSwitch("disable-features", "SpareRendererForSitePerProcess,TranslateUI,BlinkGenPropertyTrees");
 // Reduz processos auxiliares e networking em background
@@ -312,7 +313,7 @@ function loadMapCheckCatalog() {
 
 function createWindow() {
   window = new BrowserWindow({
-    width: 480, height: 620, minWidth: 420, minHeight: 480,
+    width: 520, height: 680, minWidth: 440, minHeight: 500,
     frame: false, transparent: true, alwaysOnTop: true, resizable: true,
     skipTaskbar: false, show: false, backgroundColor: "#00000000",
     icon: join(import.meta.dirname, "tray_icons", "Icon.png"),
@@ -743,7 +744,13 @@ app.whenReady().then(() => {
   // Adia operações pesadas para após a janela aparecer (startup mais rápido)
   const startServices = () => {
     if (server) return;
-    server = startServer(db, 8765, mapOverlaysPath);
+    const wikiCatalog = createWikiCatalog({
+      cachePath: join(app.getPath("userData"), "dbd-wiki-cache.json")
+    });
+    server = startServer(db, 8765, mapOverlaysPath, wikiCatalog);
+    setTimeout(() => {
+      wikiCatalog.refresh().catch(() => {});
+    }, 800);
     collector = createBackgroundCollector(db, state => {
       if (window && !window.isDestroyed()) {
         window.webContents.send("collector-status", state);
@@ -870,7 +877,7 @@ ipcMain.handle("install-update", () => {
 });
 ipcMain.handle("toggle-size", () => {
   compact = !compact;
-  window.setSize(compact ? 480 : 1180, compact ? 620 : 760, true);
+  window.setSize(compact ? 520 : 1180, compact ? 680 : 780, true);
   return compact;
 });
 ipcMain.handle("map-check-status", () => {
