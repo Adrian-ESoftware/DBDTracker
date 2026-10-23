@@ -157,11 +157,12 @@ export class CommunityClient {
 
   async uploadMatches(matches, metadata = {}) {
     const session = await this.ensureSession();
-    return uploadCommunitySubmission({
+    return uploadAllCommunityMatches({
       apiUrl: `${this.baseUrl}/api/community-ingest`,
       accessToken: session.token,
       matches,
       metadata,
+      storage: this.storage,
       fetchImpl: this.fetch
     });
   }
@@ -228,15 +229,21 @@ export function sanitizeCommunityMatches(matches, metadata = {}) {
     if (!match?.played_at || !["survivor", "killer"].includes(match.role)) {
       throw new TypeError("each match requires played_at and a valid role");
     }
+    const rawKills =
+      match.kills_count ??
+      match.killer_info?.kills_count ??
+      (match.role === "killer" && typeof match.result === "string" && /^[0-4]K$/i.test(match.result.trim())
+        ? Number.parseInt(match.result.trim()[0], 10)
+        : null);
     return {
-      official_match_id: cleanText(match.source_id),
+      official_match_id: cleanText(match.source_id ?? match.official_match_id),
       played_at: new Date(match.played_at).toISOString(),
       role: match.role,
       character_id: cleanText(match.character_id ?? match.character),
       map_id: cleanText(match.map_id ?? match.map),
       killer_id: cleanText(match.killer_id ?? match.killer_info?.killer),
       result: cleanText(match.result),
-      kills_count: cleanNumber(match.kills_count, 0, 4),
+      kills_count: cleanNumber(rawKills, 0, 4),
       duration_sec: cleanNumber(match.duration_sec, 0, 86400),
       score: cleanNumber(match.score, 0, 1000000),
       patch_version: cleanText(metadata.patch_version),
@@ -251,6 +258,15 @@ export function sanitizeCommunityMatches(matches, metadata = {}) {
       source: "official_stats"
     };
   });
+}
+
+export function getCommunityMatchKey(match) {
+  const officialId = cleanText(match?.source_id ?? match?.official_match_id) ?? "";
+  const playedAt = match?.played_at ? new Date(match.played_at).toISOString() : "";
+  const role = match?.role ?? "";
+  const characterId = cleanText(match?.character_id ?? match?.character) ?? "";
+  const mapId = cleanText(match?.map_id ?? match?.map) ?? "";
+  return `${officialId}|${playedAt}|${role}|${characterId}|${mapId}`;
 }
 
 export function createCommunitySubmission(matches, metadata = {}) {
@@ -284,9 +300,127 @@ export async function uploadCommunitySubmission({ apiUrl, accessToken, matches, 
 
   if (!response.ok) {
     const reason = body.error || body.detail || `HTTP ${response.status}`;
-    throw new Error(`Falha na sincronização: ${reason} (${response.status})`);
+    const err = new Error(`Falha na sincronização: ${reason} (${response.status})`);
+    err.status = response.status;
+    throw err;
   }
   return body;
+}
+
+export async function uploadAllCommunityMatches({
+  apiUrl,
+  accessToken,
+  matches,
+  metadata = {},
+  storage = null,
+  fetchImpl = fetch,
+  onProgress = null
+}) {
+  if (!apiUrl || !accessToken) throw new Error("community API and app access token are required");
+  if (!Array.isArray(matches) || matches.length === 0) {
+    return { accepted: 0, uploaded: 0, skipped: 0, total: 0 };
+  }
+
+  const validMatches = matches.filter(
+    m => m?.played_at && !Number.isNaN(Date.parse(m.played_at)) && ["survivor", "killer"].includes(m.role)
+  );
+  if (validMatches.length === 0) {
+    return { accepted: 0, uploaded: 0, skipped: 0, total: 0 };
+  }
+
+  const storageKey = `community_synced_keys_${createHash("sha256").update(accessToken).digest("hex").slice(0, 16)}`;
+  const syncedSet = new Set();
+  if (storage && typeof storage.getItem === "function") {
+    try {
+      const raw = storage.getItem(storageKey);
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) syncedSet.add(item);
+      }
+    } catch {}
+  }
+
+  const saveSynced = () => {
+    if (!storage || typeof storage.setItem !== "function") return;
+    try {
+      storage.setItem(storageKey, JSON.stringify([...syncedSet]));
+    } catch {}
+  };
+
+  // Deduplica mantendo a última ocorrência e filtra partidas já sincronizadas
+  const uniqueMap = new Map();
+  for (const match of validMatches) {
+    const key = getCommunityMatchKey(match);
+    if (!syncedSet.has(key)) {
+      uniqueMap.set(key, match);
+    }
+  }
+
+  const pendingMatches = [...uniqueMap.values()];
+  const alreadySyncedCount = validMatches.length - pendingMatches.length;
+  if (pendingMatches.length === 0) {
+    return {
+      accepted: validMatches.length,
+      uploaded: 0,
+      skipped: alreadySyncedCount,
+      total: validMatches.length
+    };
+  }
+
+  let uploaded = 0;
+  let skipped = alreadySyncedCount;
+
+  const uploadChunk = async chunk => {
+    try {
+      await uploadCommunitySubmission({
+        apiUrl,
+        accessToken,
+        matches: chunk,
+        metadata,
+        fetchImpl
+      });
+      for (const m of chunk) {
+        syncedSet.add(getCommunityMatchKey(m));
+      }
+      saveSynced();
+      uploaded += chunk.length;
+      if (typeof onProgress === "function") {
+        onProgress({ uploaded, skipped, total: validMatches.length });
+      }
+    } catch (error) {
+      // Se um lote falhar com HTTP 500 por conter partidas já existentes no D1,
+      // divide recursivamente ao meio para enviar todas as partidas inéditas e marcar as existentes.
+      const isConflictError = error?.status === 500 || /\(500\)/.test(error?.message || "");
+      if (isConflictError) {
+        if (chunk.length === 1) {
+          syncedSet.add(getCommunityMatchKey(chunk[0]));
+          saveSynced();
+          skipped += 1;
+          if (typeof onProgress === "function") {
+            onProgress({ uploaded, skipped, total: validMatches.length });
+          }
+          return;
+        }
+        const mid = Math.floor(chunk.length / 2);
+        await uploadChunk(chunk.slice(0, mid));
+        await uploadChunk(chunk.slice(mid));
+        return;
+      }
+      throw error;
+    }
+  };
+
+  for (let i = 0; i < pendingMatches.length; i += MAX_MATCHES_PER_UPLOAD) {
+    const batch = pendingMatches.slice(i, i + MAX_MATCHES_PER_UPLOAD);
+    await uploadChunk(batch);
+  }
+
+  return {
+    accepted: uploaded + skipped,
+    uploaded,
+    skipped,
+    total: validMatches.length
+  };
 }
 
 export async function fetchCommunityStats({ apiUrl, fetchImpl = fetch }) {

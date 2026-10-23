@@ -55,15 +55,37 @@ h2:first-child{margin-top:2px}
 .character-content{position:relative;z-index:1}
 
 /* Bars */
-.bars{display:grid;gap:8px}
+.bars{display:grid;gap:6px}
 .bars-toggle{margin-top:7px;width:100%;font-size:9px;color:var(--muted);background:transparent;border-color:var(--line)}
 .bars-toggle:hover{color:var(--text);border-color:var(--red)}
-.bar-top{display:flex;justify-content:space-between;align-items:center}
-.bar small{color:var(--muted)}
-.bar-name{display:flex;align-items:center;gap:7px}
-.thumb{width:28px;height:28px;object-fit:contain;border-radius:4px;background:#0c0f14}
+.bar{padding:5px 7px;border-radius:6px;border:1px solid transparent;transition:background .15s,border-color .15s}
+.bar.clickable{cursor:pointer}
+.bar.clickable:hover{background:rgba(255,255,255,0.04);border-color:var(--line)}
+.bar.active-inspect{background:rgba(236,60,60,0.08);border-color:var(--red)}
+.bar-top{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.bar small{color:var(--muted);white-space:nowrap}
+.bar-name{display:flex;align-items:center;gap:7px;min-width:0;font-weight:600}
+.bar-sub{font-size:9px;color:var(--muted);margin-top:3px;display:flex;flex-wrap:wrap;gap:6px;line-height:1.3}
+.bar-badge{background:#141922;border:1px solid #262f3d;padding:1px 5px;border-radius:4px;font-size:8.5px;color:#b8c4d4}
+.thumb{width:28px;height:28px;object-fit:contain;border-radius:4px;background:#0c0f14;flex-shrink:0}
 .track{height:4px;margin-top:4px;border-radius:4px;background:#2a3039}
 .fill{height:100%;background:var(--red);border-radius:4px}
+
+/* Pills & Inspector */
+.pill-group{display:inline-flex;gap:3px;background:#0c0f15;padding:2px;border-radius:6px;border:1px solid var(--line)}
+.pill-btn{font-size:9.5px;font-weight:700;padding:3px 8px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--muted);cursor:pointer;transition:all .15s}
+.pill-btn:hover{color:var(--text);background:#18202a}
+.pill-btn.active{background:var(--red);border-color:var(--red);color:#fff}
+.inspector-card{background:linear-gradient(145deg,#181f29,#0e131a);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:14px;animation:fadeIn .15s ease}
+.inspector-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.inspector-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}
+.inspector-stat{background:#0c0f15;border:1px solid var(--line);border-radius:5px;padding:6px;text-align:center}
+.inspector-stat span{display:block;font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.inspector-stat b{display:block;font-size:12px;margin-top:2px;color:var(--text)}
+.filter-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+.filter-summary-item{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px;text-align:center}
+.filter-summary-item span{display:block;font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.filter-summary-item b{display:block;font-size:12px;margin-top:2px}
 
 /* Match cards */
 .match{display:grid;grid-template-columns:44px 1fr auto;gap:3px 8px;align-items:center;background:linear-gradient(90deg,var(--panel),var(--bg));border:1px solid var(--line);padding:8px;border-radius:7px;margin-bottom:6px;cursor:pointer;transition:border-color .15s,background .15s}
@@ -263,6 +285,17 @@ h2:first-child{margin-top:2px}
   <div class="content">
     <div id="error" class="state">Carregando...</div>
     <div id="map-banner" style="display:none;"></div>
+    <div id="update-banner" style="display:none; margin-bottom:10px; padding:8px 10px; border-radius:6px; background:linear-gradient(135deg, rgba(16,185,129,0.16), rgba(15,23,42,0.95)); border:1px solid rgba(16,185,129,0.45); align-items:center; justify-content:space-between; gap:8px;">
+      <div style="display:flex; flex-direction:column; gap:2px; min-width:0; flex:1;">
+        <div id="update-banner-text" style="font-size:10px; font-weight:700; color:#e5e7eb;">Nova atualização disponível</div>
+        <div id="update-banner-bar-wrap" style="display:none; width:100%; height:4px; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden; margin-top:2px;">
+          <div id="update-banner-bar" style="width:0%; height:100%; background:#10b981; transition:width 0.2s;"></div>
+        </div>
+      </div>
+      <button id="btn-banner-install-update" style="display:none; padding:5px 10px; font-size:10px; font-weight:700; background:#10b981; border:1px solid #059669; color:#fff; border-radius:4px; cursor:pointer; flex-shrink:0;">
+        Atualizar e Reiniciar
+      </button>
+    </div>
 
     <!-- PAGE 1: STATUS -->
     <div class="page active" id="page-stats">
@@ -272,7 +305,13 @@ h2:first-child{margin-top:2px}
         <div class="card"><span>Winrate Killer</span><strong id="fourk">0%</strong></div>
         <div class="card"><span>Score medio</span><strong id="score">0</strong></div>
       </div>
-      <h2>Overview Global</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 2px 9px;">
+        <h2 style="margin:0;">Overview Global (Oficial)</h2>
+        <div class="pill-group">
+          <button class="pill-btn active" id="btn-period-all" onclick="setStatsPeriod('all-time')">Geral</button>
+          <button class="pill-btn" id="btn-period-30d" onclick="setStatsPeriod('30-days')">30 Dias</button>
+        </div>
+      </div>
       <div class="sections">
         <div class="card"><h3>Geral</h3><div id="globalStats"></div></div>
         <div class="card"><h3>Survivor</h3><div id="globalSurvivorStats"></div></div>
@@ -309,13 +348,26 @@ h2:first-child{margin-top:2px}
 
     <!-- PAGE 2: TRENDS -->
     <div class="page" id="page-trends">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:6px;">
-        <h2 style="margin:0; border:none; padding:0; letter-spacing:.08em">Destaques</h2>
-        <div style="display:flex; gap:4px;">
-          <button id="btn-trends-local" style="background:var(--red); border-color:var(--red); color:#fff; font-size:10px; font-weight:700; padding:2px 8px;">Meus Dados</button>
-          <button id="btn-trends-global" style="font-size:10px; font-weight:700; padding:2px 8px;">Comunidade</button>
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:10px; border-bottom:1px solid var(--line); padding-bottom:6px;">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <h2 style="margin:0; border:none; padding:0; letter-spacing:.08em">Destaques</h2>
+          <small style="color:var(--muted); font-size:9px;">(clique em um item para inspecionar)</small>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <div class="pill-group" id="trends-period-group">
+            <button class="pill-btn active" id="btn-trends-period-all" onclick="setStatsPeriod('all-time')">Geral</button>
+            <button class="pill-btn" id="btn-trends-period-30d" onclick="setStatsPeriod('30-days')">30 Dias</button>
+          </div>
+          <div class="pill-group">
+            <button class="pill-btn active" id="btn-trends-local">Meus Dados</button>
+            <button class="pill-btn" id="btn-trends-global">Comunidade</button>
+          </div>
         </div>
       </div>
+
+      <div id="community-summary" style="display:none; margin-bottom:12px;" class="filter-summary"></div>
+      <div id="trends-inspector" style="display:none;" class="inspector-card"></div>
+
       <h2 id="characters-ranking-title">Personagens Mais Jogados (Oficial)</h2>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
         <div>
@@ -340,15 +392,17 @@ h2:first-child{margin-top:2px}
         </div>
       </div>
 
-      <h2 id="perks-others-title">Perks dos Outros Jogadores</h2>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
-        <div>
-          <div style="font-size:9px;font-weight:700;color:var(--red);text-transform:uppercase;margin-bottom:6px;letter-spacing:.08em">Survivor</div>
-          <div class="bars" id="perks-others-survivor"></div>
-        </div>
-        <div>
-          <div style="font-size:9px;font-weight:700;color:var(--red);text-transform:uppercase;margin-bottom:6px;letter-spacing:.08em">Killer</div>
-          <div class="bars" id="perks-others-killer"></div>
+      <div id="perks-others-block">
+        <h2 id="perks-others-title">Perks dos Outros Jogadores</h2>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
+          <div>
+            <div style="font-size:9px;font-weight:700;color:var(--red);text-transform:uppercase;margin-bottom:6px;letter-spacing:.08em">Survivor</div>
+            <div class="bars" id="perks-others-survivor"></div>
+          </div>
+          <div>
+            <div style="font-size:9px;font-weight:700;color:var(--red);text-transform:uppercase;margin-bottom:6px;letter-spacing:.08em">Killer</div>
+            <div class="bars" id="perks-others-killer"></div>
+          </div>
         </div>
       </div>
 
@@ -358,12 +412,30 @@ h2:first-child{margin-top:2px}
 
     <!-- PAGE 3: MATCHES -->
     <div class="page" id="page-matches">
-      <h2>Partidas recentes</h2>
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
+        <h2 style="margin:0;">Partidas salvas</h2>
+        <div style="display:flex; gap:4px; flex-wrap:wrap;">
+          <div class="pill-group">
+            <button class="pill-btn active" id="filter-role-all" onclick="setMatchRoleFilter('all')">Todos</button>
+            <button class="pill-btn" id="filter-role-survivor" onclick="setMatchRoleFilter('survivor')">Survivor</button>
+            <button class="pill-btn" id="filter-role-killer" onclick="setMatchRoleFilter('killer')">Killer</button>
+          </div>
+          <div class="pill-group">
+            <button class="pill-btn active" id="filter-res-all" onclick="setMatchResultFilter('all')">Todos</button>
+            <button class="pill-btn" id="filter-res-win" onclick="setMatchResultFilter('win')">Fuga / 3K+</button>
+            <button class="pill-btn" id="filter-res-loss" onclick="setMatchResultFilter('loss')">Derrota</button>
+          </div>
+        </div>
+      </div>
       <div class="date-filter">
-        <label>De<input type="text" id="matches-date-from" placeholder="DD/MM/AAAA, DD ou MM/AAAA" inputmode="numeric"></label>
-        <label>Até<input type="text" id="matches-date-to" placeholder="DD/MM/AAAA, DD ou MM/AAAA" inputmode="numeric"></label>
+        <label style="flex:2; min-width:160px;">Buscar (Mapa, Survivor, Killer, Perk)
+          <input type="text" id="matches-search" placeholder="Ex: Family Residence, Ada Wong, Mastermind, Dead Hard...">
+        </label>
+        <label style="min-width:95px;">De<input type="text" id="matches-date-from" placeholder="DD/MM/AAAA" inputmode="numeric"></label>
+        <label style="min-width:95px;">Até<input type="text" id="matches-date-to" placeholder="DD/MM/AAAA" inputmode="numeric"></label>
         <button id="matches-date-clear">Limpar</button>
       </div>
+      <div id="matches-filter-summary" class="filter-summary"></div>
       <div id="matches"></div>
     </div>
 
@@ -495,6 +567,31 @@ h2:first-child{margin-top:2px}
         </div>
       </div>
 
+      <!-- CARD: ATUALIZAÇÕES AUTOMÁTICAS -->
+      <div class="card" style="padding:12px; margin-bottom:12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            <span style="font-size:10px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; color:var(--text);">Atualizações do Software (GitHub)</span>
+          </div>
+          <span id="updater-version-badge" style="font-size:9px; font-weight:700; background:#1f2937; color:#9ca3af; padding:2px 6px; border-radius:4px;">v1.2.3</span>
+        </div>
+        <div style="border-top:1px solid var(--line); padding-top:8px; display:flex; flex-direction:column; gap:8px;">
+          <div id="updater-status-text" style="font-size:10px; color:var(--muted);">Verificação automática ativada via GitHub Releases.</div>
+          <div id="updater-progress-wrap" style="display:none; width:100%; height:5px; background:#1c222b; border-radius:3px; overflow:hidden;">
+            <div id="updater-progress-bar" style="width:0%; height:100%; background:#10b981; transition:width 0.2s;"></div>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button id="btn-check-updates" style="flex:1; padding:6px 8px; font-size:10px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:5px;">
+              Verificar Atualizações
+            </button>
+            <button id="btn-install-update" style="display:none; flex:1; padding:6px 8px; font-size:10px; font-weight:700; background:#10b981; border-color:#059669; color:#fff; cursor:pointer; align-items:center; justify-content:center; gap:5px;">
+              Instalar e Reiniciar
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- CARD 3: DETECTOR DE MAPAS (WIP) -->
       <div class="card" style="padding:12px; margin-bottom:12px; background:linear-gradient(145deg, #151a22, #0c0f15);">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
@@ -612,6 +709,93 @@ document.querySelectorAll('.tab').forEach(function(tab) {
   });
 });
 
+var statsPeriod = 'all-time';
+var activeInspect = null;
+var matchRoleFilter = 'all';
+var matchResultFilter = 'all';
+
+window.setStatsPeriod = function(period) {
+  statsPeriod = period === '30-days' ? '30-days' : 'all-time';
+  var isAll = statsPeriod === 'all-time';
+  ['btn-period-all', 'btn-trends-period-all'].forEach(function(id) {
+    if ($(id)) $(id).classList.toggle('active', isAll);
+  });
+  ['btn-period-30d', 'btn-trends-period-30d'].forEach(function(id) {
+    if ($(id)) $(id).classList.toggle('active', !isAll);
+  });
+  load();
+};
+
+window.setMatchRoleFilter = function(role) {
+  matchRoleFilter = role || 'all';
+  ['all', 'survivor', 'killer'].forEach(function(r) {
+    var btn = $('filter-role-' + r);
+    if (btn) btn.classList.toggle('active', r === matchRoleFilter);
+  });
+  filterMatchesByDate();
+};
+
+window.setMatchResultFilter = function(res) {
+  matchResultFilter = res || 'all';
+  ['all', 'win', 'loss'].forEach(function(r) {
+    var btn = $('filter-res-' + r);
+    if (btn) btn.classList.toggle('active', r === matchResultFilter);
+  });
+  filterMatchesByDate();
+};
+
+window.jumpToMatchesFilter = function(query, role) {
+  if ($('matches-search')) {
+    $('matches-search').value = query || '';
+    localStorage.setItem('matches-search', query || '');
+  }
+  setMatchRoleFilter(role || 'all');
+  document.querySelectorAll('.tab').forEach(function(t) {
+    var isMatches = t.dataset.tab === 'matches';
+    t.classList.toggle('active', isMatches);
+  });
+  document.querySelectorAll('.page').forEach(function(p) {
+    p.classList.toggle('active', p.id === 'page-matches');
+  });
+  filterMatchesByDate();
+};
+
+function buildBarSub(x, key) {
+  var badges = [];
+  if (key === 'map') {
+    if (x.surv_count) {
+      badges.push('Surv: ' + x.surv_count + 'p (' + (x.surv_escape_rate != null ? x.surv_escape_rate + '% Fuga' : x.surv_winrate + '% WR') + ')');
+    }
+    if (x.killer_count) {
+      badges.push('Killer: ' + x.killer_count + 'p (' + (x.avg_kills != null ? x.avg_kills + 'K' : x.killer_winrate + '% WR') + ')');
+    }
+    if (x.top_killer) {
+      badges.push('Killer +comum: ' + x.top_killer);
+    }
+    if (x.realm) {
+      badges.push(x.realm);
+    }
+  } else if (key === 'killer') {
+    if (x.escape_rate != null) {
+      badges.push('Fuga pessoal: ' + x.escape_rate + '%');
+    }
+    if (x.avg_kills != null) {
+      badges.push('Média: ' + x.avg_kills + 'K');
+    } else if (x.average_kills != null) {
+      badges.push('Média: ' + x.average_kills + 'K');
+    }
+  } else if (key === 'character') {
+    if (x.hours != null) {
+      badges.push((Math.round(x.hours * 10) / 10) + 'h jogadas');
+    }
+    if (x.average_kills != null) {
+      badges.push('Média: ' + x.average_kills + 'K');
+    }
+  }
+  if (!badges.length) return '';
+  return '<div class="bar-sub">' + badges.map(function(b) { return '<span class="bar-badge">' + esc(b) + '</span>'; }).join('') + '</div>';
+}
+
 function bars(id, rows, key, initialLimit) {
   var el = $(id);
   if (!rows || !rows.length) { el.innerHTML = '<small style="color:var(--muted)">Sem dados.</small>'; return; }
@@ -619,12 +803,29 @@ function bars(id, rows, key, initialLimit) {
   var expanded = el.dataset.expanded === 'true';
   var visibleRows = expanded ? rows : rows.slice(0, limit);
   el.innerHTML = visibleRows.map(function(x) {
-    var name = x[key] + (x.winrate !== undefined ? ' (' + x.winrate + '%WR)' : '');
-    return '<div class="bar"><div class="bar-top"><span class="bar-name">' +
-      (x.image ? '<img class="thumb" src="' + esc(x.image) + '" title="' + esc(x[key]) + '">' : '') +
-      esc(name) + '</span><small>' + x.count + ' &nbsp;' + x.pct + '%</small></div>' +
+    var val = x[key];
+    var suffix = '';
+    if (x.winrate !== undefined && x.winrate !== null) {
+      suffix = ' (' + x.winrate + '%WR)';
+    } else if (x.average_kills !== undefined && x.average_kills !== null) {
+      suffix = ' (' + x.average_kills + 'K)';
+    }
+    var name = val + suffix;
+    var isSelected = activeInspect && activeInspect.key === key && activeInspect.value === val;
+    return '<div class="bar clickable' + (isSelected ? ' active-inspect' : '') + '" data-inspect-key="' + esc(key) + '" data-inspect-val="' + esc(val) + '" title="Clique para ver detalhes de ' + esc(val) + '">' +
+      '<div class="bar-top"><span class="bar-name">' +
+      (x.image ? '<img class="thumb" src="' + esc(x.image) + '" title="' + esc(val) + '">' : '') +
+      '<span>' + esc(name) + '</span></span><small>' + x.count + ' &nbsp;' + x.pct + '%</small></div>' +
+      buildBarSub(x, key) +
       '<div class="track"><div class="fill" style="width:' + Math.max(2, x.pct) + '%"></div></div></div>';
   }).join('');
+  el.querySelectorAll('.bar.clickable').forEach(function(barEl) {
+    barEl.onclick = function() {
+      var k = barEl.getAttribute('data-inspect-key');
+      var v = barEl.getAttribute('data-inspect-val');
+      inspectItem(k, v);
+    };
+  });
   if (rows.length > limit) {
     var toggle = document.createElement('button');
     toggle.className = 'bars-toggle';
@@ -635,6 +836,107 @@ function bars(id, rows, key, initialLimit) {
     };
     el.appendChild(toggle);
   }
+}
+
+window.closeInspector = function() {
+  activeInspect = null;
+  if ($('trends-inspector')) $('trends-inspector').style.display = 'none';
+  document.querySelectorAll('.bar.active-inspect').forEach(function(el) { el.classList.remove('active-inspect'); });
+};
+
+function matchHasItem(m, key, val) {
+  var target = String(val || '').toLowerCase();
+  if (!target) return false;
+  if (key === 'map') return String(m.map || '').toLowerCase() === target;
+  if (key === 'killer') {
+    var kName = (m.killer_info && m.killer_info.killer) || (m.role === 'killer' ? m.character : '');
+    return String(kName || '').toLowerCase() === target;
+  }
+  if (key === 'character') {
+    if (String(m.character || '').toLowerCase() === target) return true;
+    return (m.participants || []).some(function(p) { return String(p.character || '').toLowerCase() === target; });
+  }
+  if (key === 'perk') {
+    var own = (m.loadout && m.loadout.perks) || [];
+    var kil = (m.killer_info && m.killer_info.perks) || [];
+    if (own.concat(kil).some(function(p) { return String(p || '').toLowerCase() === target; })) return true;
+    return (m.participants || []).some(function(part) {
+      return (part.perks || []).some(function(p) { return String(p || '').toLowerCase() === target; });
+    });
+  }
+  return false;
+}
+
+function isMatchWin(m) {
+  if (m.role === 'killer') {
+    var kills = m.killer_info && m.killer_info.kills_count != null
+      ? m.killer_info.kills_count
+      : (/^[0-4]K$/i.test(m.result || '') ? parseInt(m.result, 10) : 0);
+    return kills >= 3;
+  }
+  return /escape|win|fugiu/i.test(m.result || '');
+}
+
+function inspectItem(key, val) {
+  var box = $('trends-inspector');
+  if (!box) return;
+  if (activeInspect && activeInspect.key === key && activeInspect.value === val) {
+    closeInspector();
+    return;
+  }
+  activeInspect = { key: key, value: val };
+  document.querySelectorAll('.bar.clickable').forEach(function(el) {
+    var match = el.getAttribute('data-inspect-key') === key && el.getAttribute('data-inspect-val') === val;
+    el.classList.toggle('active-inspect', match);
+  });
+
+  var filtered = (allMatchData || []).filter(function(m) { return matchHasItem(m, key, val); });
+  var survMatches = filtered.filter(function(m) { return m.role === 'survivor'; });
+  var killerMatches = filtered.filter(function(m) { return m.role === 'killer'; });
+  var survEscapes = survMatches.filter(function(m) { return /escape|win|fugiu/i.test(m.result || ''); }).length;
+  var killerWins = killerMatches.filter(isMatchWin).length;
+  var totalBp = filtered.reduce(function(s, m) { return s + (Number(m.score) || 0); }, 0);
+  var avgBp = filtered.length ? Math.round(totalBp / filtered.length) : 0;
+
+  // Top Sub-associações (ex: em qual mapa mais ocorre ou qual killer mais aparece)
+  var assocMap = {};
+  var assocLabel = key === 'map' ? 'Killers mais enfrentados neste mapa' : 'Mapas mais frequentes';
+  filtered.forEach(function(m) {
+    var kVal = key === 'map'
+      ? ((m.killer_info && m.killer_info.killer) || (m.role === 'killer' ? m.character : null))
+      : m.map;
+    if (kVal) assocMap[kVal] = (assocMap[kVal] || 0) + 1;
+  });
+  var topAssoc = Object.entries(assocMap).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 4);
+
+  var typeNames = { map: 'Mapa', killer: 'Killer', character: 'Personagem', perk: 'Perk' };
+  box.innerHTML =
+    '<div class="inspector-header">' +
+      '<div><span style="font-size:9px;text-transform:uppercase;color:var(--red);font-weight:700;letter-spacing:.08em;">Raio-X de ' + esc(typeNames[key] || key) + '</span>' +
+      '<div style="font-size:13px;font-weight:800;color:var(--text);">' + esc(val) + '</div></div>' +
+      '<div style="display:flex;gap:6px;align-items:center;">' +
+        '<button style="font-size:10px;padding:4px 8px;background:var(--red);border-color:var(--red);color:#fff;font-weight:700;" data-jump-val="' + esc(val) + '">Ver ' + filtered.length + ' partida(s)</button>' +
+        '<button style="font-size:11px;padding:3px 7px;" onclick="closeInspector()" title="Fechar">✕</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="inspector-grid">' +
+      '<div class="inspector-stat"><span>Suas Partidas</span><b>' + filtered.length + '</b></div>' +
+      '<div class="inspector-stat"><span>Como Survivor</span><b class="good">' + (survMatches.length ? Math.round((survEscapes * 100) / survMatches.length) + '% Fuga (' + survMatches.length + 'p)' : '-') + '</b></div>' +
+      '<div class="inspector-stat"><span>Como Killer</span><b>' + (killerMatches.length ? Math.round((killerWins * 100) / killerMatches.length) + '% WR (' + killerMatches.length + 'p)' : '-') + '</b></div>' +
+      '<div class="inspector-stat"><span>Média BP</span><b>' + fmt(avgBp) + '</b></div>' +
+    '</div>' +
+    (topAssoc.length ? '<div style="font-size:9px;color:var(--muted);margin-bottom:4px;">' + esc(assocLabel) + ':</div><div class="bar-sub">' +
+      topAssoc.map(function(pair) { return '<span class="bar-badge">' + esc(pair[0]) + ' (' + pair[1] + 'x)</span>'; }).join('') +
+    '</div>' : '');
+
+  var jumpBtn = box.querySelector('[data-jump-val]');
+  if (jumpBtn) {
+    jumpBtn.onclick = function() {
+      jumpToMatchesFilter(jumpBtn.getAttribute('data-jump-val'), 'all');
+    };
+  }
+  box.style.display = 'block';
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 var sectionLabels = {
@@ -659,7 +961,7 @@ function findSection(rows, period, role) {
 }
 
 function globalSection(id, rows, role) {
-  var row = findSection(rows, 'all-time', role) || findSection(rows, '30-days', role);
+  var row = findSection(rows, statsPeriod, role) || findSection(rows, 'all-time', role) || findSection(rows, '30-days', role);
   var values = (row && row.values) || {};
   var roleKeys = role === 'survivors'
     ? ['totalMatchesPlayed', 'totalHoursPlayed', 'escapeRate', 'matchesEscaped', 'survivorChasesWon', 'survivorSuccessfullyHealed', 'bpEarnedThroughMatch']
@@ -685,7 +987,7 @@ function globalSection(id, rows, role) {
 }
 
 function characterSection(id, titleId, cardId, rows, role) {
-  var row = findSection(rows, 'all-time', role) || findSection(rows, '30-days', role);
+  var row = findSection(rows, statsPeriod, role) || findSection(rows, 'all-time', role) || findSection(rows, '30-days', role);
   var label = role === 'survivor' ? 'Survivor' : 'Killer';
   var emblems = /Benevolent|Evader|Lightbringer|Unbroken|Chaser|Devout|Gatekeeper|Malicious/i;
   $(titleId).textContent = row ? 'Top ' + label + ' / ' + row.character : 'Top ' + label;
@@ -882,19 +1184,65 @@ function renderMatches() {
   }
 }
 
+function renderMatchesSummary(list) {
+  var el = $('matches-filter-summary');
+  if (!el) return;
+  var total = list.length;
+  var surv = list.filter(function(m) { return m.role === 'survivor'; });
+  var kil = list.filter(function(m) { return m.role === 'killer'; });
+  var survEscapes = surv.filter(function(m) { return /escape|win|fugiu/i.test(m.result || ''); }).length;
+  var kilWins = kil.filter(isMatchWin).length;
+  var bpSum = list.reduce(function(s, m) { return s + (Number(m.score) || 0); }, 0);
+  var avgBp = total ? Math.round(bpSum / total) : 0;
+
+  el.innerHTML =
+    '<div class="filter-summary-item"><span>Partidas</span><b>' + fmt(total) + '</b></div>' +
+    '<div class="filter-summary-item"><span>Fuga Survivor</span><b class="good">' + (surv.length ? Math.round((survEscapes * 100) / surv.length) + '% (' + survEscapes + '/' + surv.length + ')' : '-') + '</b></div>' +
+    '<div class="filter-summary-item"><span>Winrate Killer</span><b>' + (kil.length ? Math.round((kilWins * 100) / kil.length) + '% (' + kilWins + '/' + kil.length + ')' : '-') + '</b></div>' +
+    '<div class="filter-summary-item"><span>Média BP</span><b>' + fmt(avgBp) + '</b></div>';
+}
+
 function filterMatchesByDate() {
-  var fromText = $('matches-date-from').value.trim();
-  var toText = $('matches-date-to').value.trim();
+  var fromText = ($('matches-date-from') && $('matches-date-from').value || '').trim();
+  var toText = ($('matches-date-to') && $('matches-date-to').value || '').trim();
+  var searchText = ($('matches-search') && $('matches-search').value || '').trim().toLowerCase();
   localStorage.setItem('matches-date-from', fromText);
   localStorage.setItem('matches-date-to', toText);
+  localStorage.setItem('matches-search', searchText);
   var from = parseDateFilter(fromText, false);
   var to = parseDateFilter(toText, true);
   matchData = allMatchData.filter(function(match) {
     var date = new Date(match.played_at);
     if (Number.isNaN(date.valueOf())) return false;
     var day = date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
-    return (!from || day >= from.from) && (!to || day <= to.to);
+    if ((from && day < from.from) || (to && day > to.to)) return false;
+    if (matchRoleFilter !== 'all' && match.role !== matchRoleFilter) return false;
+    if (matchResultFilter !== 'all') {
+      var win = isMatchWin(match);
+      if (matchResultFilter === 'win' && !win) return false;
+      if (matchResultFilter === 'loss' && win) return false;
+    }
+    if (searchText) {
+      var hay = [
+        match.character,
+        match.map,
+        match.map_realm,
+        match.result,
+        match.killer_info && match.killer_info.killer,
+        match.loadout && match.loadout.item,
+        match.loadout && match.loadout.offering
+      ]
+        .concat((match.loadout && match.loadout.perks) || [])
+        .concat((match.killer_info && match.killer_info.perks) || [])
+        .concat((match.participants || []).map(function(p) { return p.character; }))
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (hay.indexOf(searchText) === -1) return false;
+    }
+    return true;
   });
+  renderMatchesSummary(matchData);
   renderMatches();
 }
 
@@ -932,42 +1280,59 @@ var trendsGlobal = false;
 async function load() {
   try {
     var trendsQuerySuffix = trendsGlobal ? '?global=true' : '';
+    var periodParam = 'period=' + encodeURIComponent(statsPeriod);
     var communityPromise = trendsGlobal ? window.dbd.communityStats() : Promise.resolve(null);
     var results = await Promise.all([
       get('/stats/overview'),
       get('/stats/killers' + trendsQuerySuffix),
       get('/stats/maps' + trendsQuerySuffix),
-      get('/matches?limit=500'),
+      get('/matches?limit=5000'),
       get('/official-sections'),
-      get('/stats/perks?scope=own-survivor'),
-      get('/stats/perks?scope=own-killer'),
+      get('/stats/perks?scope=own-survivor&' + periodParam),
+      get('/stats/perks?scope=own-killer&' + periodParam),
       get('/stats/perks?scope=others-survivor' + (trendsGlobal ? '&global=true' : '')),
       get('/stats/perks?scope=others-killer' + (trendsGlobal ? '&global=true' : '')),
       get('/top-characters'),
       get('/assets'),
-      get('/stats/characters?role=survivor'),
-      get('/stats/characters?role=killer'),
+      get('/stats/characters?role=survivor&' + periodParam),
+      get('/stats/characters?role=killer&' + periodParam),
       communityPromise
     ]);
     var o=results[0], k=results[1], m=results[2], recent=results[3], sections=results[4], pOwnSurv=results[5], pOwnKiller=results[6], pOthersSurv=results[7], pOthersKiller=results[8], top=results[9], allAssets=results[10], cOwnSurv=results[11], cOwnKiller=results[12], community=results[13];
+    if ($('trends-period-group')) $('trends-period-group').style.display = trendsGlobal ? 'none' : 'inline-flex';
+    if ($('perks-others-block')) $('perks-others-block').style.display = trendsGlobal ? 'none' : 'block';
+
     if (trendsGlobal && community) {
       $('characters-ranking-title').textContent = 'Personagens Mais Jogados (Comunidade)';
       $('perks-user-title').textContent = 'Perks Mais Usadas (Comunidade)';
-      $('perks-others-title').textContent = 'Perks Mais Usadas (Comunidade)';
-      cOwnSurv = community.characters.survivor.map(function(x) { return { character: x.value, count: x.count, pct: x.pct }; });
-      cOwnKiller = community.characters.killer.map(function(x) { return { character: x.value, count: x.count, pct: x.pct }; });
-      k = community.killers.map(function(x) { return { killer: x.killer, count: x.count, pct: 0 }; });
+      cOwnSurv = community.characters.survivor.map(function(x) { return { character: x.value, count: x.count, pct: x.pct, winrate: x.winrate }; });
+      cOwnKiller = community.characters.killer.map(function(x) { return { character: x.value, count: x.count, pct: x.pct, winrate: x.winrate, average_kills: x.average_kills }; });
+      k = community.killers.map(function(x) { return { killer: x.killer, count: x.count, pct: 0, winrate: x.winrate, average_kills: x.average_kills }; });
       var killerTotal = k.reduce(function(sum, x) { return sum + x.count; }, 0);
       k.forEach(function(x) { x.pct = killerTotal ? Math.round(x.count * 1000 / killerTotal) / 10 : 0; });
-      m = community.maps.map(function(x) { return { map: x.value, count: x.count, pct: x.pct }; });
+      m = community.maps.map(function(x) { return { map: x.value, count: x.count, pct: x.pct, winrate: x.winrate }; });
       pOthersSurv = community.perks.survivor.map(function(x) { return { perk: x.value, count: x.count, pct: x.pct }; });
       pOthersKiller = community.perks.killer.map(function(x) { return { perk: x.value, count: x.count, pct: x.pct }; });
       pOwnSurv = pOthersSurv;
       pOwnKiller = pOthersKiller;
+
+      var commTotalMatches = community.total_matches || m.reduce(function(sum, x) { return sum + x.count; }, 0);
+      var topCommSurv = cOwnSurv[0] ? cOwnSurv[0].character : '-';
+      var topCommKiller = k[0] ? k[0].killer : '-';
+      var topCommMap = m[0] ? m[0].map : '-';
+      if ($('community-summary')) {
+        $('community-summary').style.display = 'grid';
+        $('community-summary').innerHTML =
+          '<div class="filter-summary-item"><span>Partidas Comunidade</span><b>' + fmt(commTotalMatches) + '</b></div>' +
+          '<div class="filter-summary-item"><span>Top Survivor</span><b>' + esc(topCommSurv) + '</b></div>' +
+          '<div class="filter-summary-item"><span>Top Killer</span><b>' + esc(topCommKiller) + '</b></div>' +
+          '<div class="filter-summary-item"><span>Top Mapa</span><b>' + esc(topCommMap) + '</b></div>';
+      }
     } else {
-      $('characters-ranking-title').textContent = 'Personagens Mais Jogados (Oficial)';
-      $('perks-user-title').textContent = 'Perks do Usuário';
+      $('characters-ranking-title').textContent = 'Personagens Mais Jogados (' + (statsPeriod === '30-days' ? '30 Dias' : 'Oficial') + ')';
+      $('perks-user-title').textContent = 'Perks do Usuário (' + (statsPeriod === '30-days' ? '30 Dias' : 'Oficial') + ')';
       $('perks-others-title').textContent = 'Perks dos Outros Jogadores';
+      if ($('community-summary')) $('community-summary').style.display = 'none';
     }
 
     // Build all image maps
@@ -1018,8 +1383,7 @@ async function load() {
 
     // Page 3
     allMatchData = recent;
-    matchData = recent;
-    renderMatches();
+    filterMatchesByDate();
 
     $('error').hidden = true;
   } catch(e) {
@@ -1088,24 +1452,16 @@ $('clearLogin').onclick = async function() {
 $('btn-trends-local').onclick = function() {
   if (!trendsGlobal) return;
   trendsGlobal = false;
-  $('btn-trends-local').style.background = 'var(--red)';
-  $('btn-trends-local').style.borderColor = 'var(--red)';
-  $('btn-trends-local').style.color = '#fff';
-  $('btn-trends-global').style.background = '';
-  $('btn-trends-global').style.borderColor = '';
-  $('btn-trends-global').style.color = '';
+  $('btn-trends-local').classList.add('active');
+  $('btn-trends-global').classList.remove('active');
   load();
 };
 
 $('btn-trends-global').onclick = function() {
   if (trendsGlobal) return;
   trendsGlobal = true;
-  $('btn-trends-global').style.background = 'var(--red)';
-  $('btn-trends-global').style.borderColor = 'var(--red)';
-  $('btn-trends-global').style.color = '#fff';
-  $('btn-trends-local').style.background = '';
-  $('btn-trends-local').style.borderColor = '';
-  $('btn-trends-local').style.color = '';
+  $('btn-trends-global').classList.add('active');
+  $('btn-trends-local').classList.remove('active');
   load();
 };
 
@@ -1421,6 +1777,11 @@ $('setting-community-opt-in').onchange = function() {
 $('btn-community-backup').onclick = linkCommunityEmail;
 $('matches-date-from').value = localStorage.getItem('matches-date-from') || '';
 $('matches-date-to').value = localStorage.getItem('matches-date-to') || '';
+if ($('matches-search')) {
+  $('matches-search').value = localStorage.getItem('matches-search') || '';
+  $('matches-search').oninput = filterMatchesByDate;
+  $('matches-search').onchange = filterMatchesByDate;
+}
 $('matches-date-from').oninput = filterMatchesByDate;
 $('matches-date-to').oninput = filterMatchesByDate;
 $('matches-date-from').onchange = filterMatchesByDate;
@@ -1428,11 +1789,87 @@ $('matches-date-to').onchange = filterMatchesByDate;
 $('matches-date-clear').onclick = function() {
   $('matches-date-from').value = '';
   $('matches-date-to').value = '';
+  if ($('matches-search')) $('matches-search').value = '';
+  setMatchRoleFilter('all');
+  setMatchResultFilter('all');
   filterMatchesByDate();
 };
 $('btn-show-preview').onclick = function() {
   window.dbd.showMapPreview();
 };
+
+function renderUpdaterStatus(state) {
+  if (!state) return;
+  if ($('updater-version-badge') && state.currentVersion) {
+    $('updater-version-badge').textContent = 'v' + state.currentVersion;
+  }
+  if ($('updater-status-text')) {
+    $('updater-status-text').textContent = state.message || ('Versão atual: v' + (state.currentVersion || ''));
+    $('updater-status-text').style.color = state.status === 'error' ? '#f87171' : (state.status === 'downloaded' ? '#10b981' : 'var(--muted)');
+  }
+  var isDownloading = state.status === 'downloading';
+  var isDownloaded = state.status === 'downloaded';
+  var isAvailable = state.status === 'available';
+
+  if ($('updater-progress-wrap')) {
+    $('updater-progress-wrap').style.display = isDownloading ? 'block' : 'none';
+    if ($('updater-progress-bar')) $('updater-progress-bar').style.width = (state.progress || 0) + '%';
+  }
+  if ($('btn-check-updates')) {
+    $('btn-check-updates').disabled = state.status === 'checking' || isDownloading;
+    $('btn-check-updates').textContent = state.status === 'checking' ? 'Verificando...' : 'Verificar Atualizações';
+  }
+  if ($('btn-install-update')) {
+    $('btn-install-update').style.display = (isDownloaded || (isAvailable && !state.canAutoInstall)) ? 'flex' : 'none';
+    $('btn-install-update').textContent = state.canAutoInstall === false
+      ? ('Baixar v' + (state.latestVersion || '') + ' no GitHub')
+      : ('Instalar v' + (state.latestVersion || '') + ' e Reiniciar');
+  }
+
+  var banner = $('update-banner');
+  if (banner) {
+    if (isDownloading || isDownloaded || (isAvailable && !state.canAutoInstall)) {
+      banner.style.display = 'flex';
+      if ($('update-banner-text')) {
+        $('update-banner-text').textContent = isDownloaded
+          ? ('Nova versão v' + state.latestVersion + ' baixada e pronta!')
+          : (state.message || 'Atualizando...');
+      }
+      if ($('update-banner-bar-wrap')) {
+        $('update-banner-bar-wrap').style.display = isDownloading ? 'block' : 'none';
+        if ($('update-banner-bar')) $('update-banner-bar').style.width = (state.progress || 0) + '%';
+      }
+      if ($('btn-banner-install-update')) {
+        $('btn-banner-install-update').style.display = (isDownloaded || (isAvailable && !state.canAutoInstall)) ? 'block' : 'none';
+        $('btn-banner-install-update').textContent = state.canAutoInstall === false ? 'Abrir GitHub' : 'Atualizar e Reiniciar';
+      }
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+}
+
+if ($('btn-check-updates') && window.dbd.checkForUpdates) {
+  $('btn-check-updates').onclick = function() {
+    window.dbd.checkForUpdates().then(renderUpdaterStatus).catch(function() {});
+  };
+}
+if ($('btn-install-update') && window.dbd.installUpdate) {
+  $('btn-install-update').onclick = function() {
+    window.dbd.installUpdate();
+  };
+}
+if ($('btn-banner-install-update') && window.dbd.installUpdate) {
+  $('btn-banner-install-update').onclick = function() {
+    window.dbd.installUpdate();
+  };
+}
+if (window.dbd.onUpdaterStatus) {
+  window.dbd.onUpdaterStatus(renderUpdaterStatus);
+}
+if (window.dbd.updaterStatus) {
+  window.dbd.updaterStatus().then(renderUpdaterStatus).catch(function() {});
+}
 
 initOverlaySettings();
 setSizeIcon(true);

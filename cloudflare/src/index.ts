@@ -68,14 +68,35 @@ async function authenticate(
 }
 
 export async function refreshStats(db: D1Database): Promise<void> {
+  const uniqueMatchesCte = `
+    WITH unique_matches AS (
+      SELECT *
+      FROM (
+        SELECT
+          m.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(NULLIF(m.official_match_id, ''), m.played_at), COALESCE(m.map_id, '')
+            ORDER BY
+              (CASE WHEN m.kills_count IS NOT NULL THEN 1 ELSE 0 END) DESC,
+              (CASE WHEN m.killer_id IS NOT NULL AND m.killer_id != '' THEN 1 ELSE 0 END) DESC,
+              m.created_at ASC,
+              m.id ASC
+          ) as rn
+        FROM community_matches m
+      )
+      WHERE rn = 1
+    )
+  `;
+
   const statements: D1PreparedStatement[] = [
     db.prepare("DELETE FROM public_character_stats"),
     db.prepare("DELETE FROM public_map_stats"),
     db.prepare("DELETE FROM public_killer_stats"),
     db.prepare("DELETE FROM public_perk_stats"),
 
-    // Character stats (survivors and killers from matches and participants)
+    // Character stats (survivors and killers from deduplicated matches and participants)
     db.prepare(`
+      ${uniqueMatchesCte}
       INSERT INTO public_character_stats (patch_version, role, character_id, match_count, escapes, kills, average_score)
       SELECT
         patch_version,
@@ -94,7 +115,7 @@ export async function refreshStats(db: D1Database): Promise<void> {
           CASE WHEN role = 'survivor' AND LOWER(COALESCE(result, '')) LIKE '%escape%' THEN 1 ELSE 0 END as escapes,
           CASE WHEN role = 'killer' THEN COALESCE(kills_count, 0) ELSE 0 END as kills,
           score
-        FROM community_matches
+        FROM unique_matches
         WHERE character_id IS NOT NULL AND character_id != ''
 
         UNION ALL
@@ -107,12 +128,12 @@ export async function refreshStats(db: D1Database): Promise<void> {
           0 as escapes,
           COALESCE(kills_count, 0) as kills,
           NULL as score
-        FROM community_matches
+        FROM unique_matches
         WHERE role = 'survivor' AND killer_id IS NOT NULL AND killer_id != ''
 
         UNION ALL
 
-        -- Participants characters
+        -- Participants characters (excluding killer already counted via killer_id in survivor matches)
         SELECT
           COALESCE(m.patch_version, 'unknown') as patch_version,
           p.role,
@@ -121,15 +142,17 @@ export async function refreshStats(db: D1Database): Promise<void> {
           0 as kills,
           NULL as score
         FROM community_match_participants p
-        JOIN community_matches m ON m.id = p.match_id
+        JOIN unique_matches m ON m.id = p.match_id
         WHERE p.character_id IS NOT NULL AND p.character_id != ''
           AND p.role IN ('survivor', 'killer')
+          AND NOT (m.role = 'survivor' AND p.role = 'killer' AND m.killer_id IS NOT NULL AND m.killer_id != '')
       )
       GROUP BY patch_version, role, character_id
     `),
 
-    // Map stats
+    // Map stats (from deduplicated matches)
     db.prepare(`
+      ${uniqueMatchesCte}
       INSERT INTO public_map_stats (patch_version, role, map_id, match_count, escapes, kills)
       SELECT
         COALESCE(patch_version, 'unknown'),
@@ -138,13 +161,14 @@ export async function refreshStats(db: D1Database): Promise<void> {
         COUNT(*),
         SUM(CASE WHEN role = 'survivor' AND LOWER(COALESCE(result, '')) LIKE '%escape%' THEN 1 ELSE 0 END),
         SUM(CASE WHEN role = 'killer' THEN COALESCE(kills_count, 0) ELSE 0 END)
-      FROM community_matches
+      FROM unique_matches
       WHERE map_id IS NOT NULL AND map_id != ''
       GROUP BY COALESCE(patch_version, 'unknown'), role, COALESCE(map_id, '')
     `),
 
-    // Killer stats (from both killer role and survivor matches where killer was encountered)
+    // Killer stats (from both killer role and survivor matches where killer was encountered, deduplicated)
     db.prepare(`
+      ${uniqueMatchesCte}
       INSERT INTO public_killer_stats (patch_version, killer_id, match_count, kills, average_kills)
       SELECT
         patch_version,
@@ -157,15 +181,16 @@ export async function refreshStats(db: D1Database): Promise<void> {
           COALESCE(patch_version, 'unknown') as patch_version,
           COALESCE(killer_id, CASE WHEN role = 'killer' THEN character_id END) as killer_id,
           COALESCE(kills_count, 0) as kills
-        FROM community_matches
+        FROM unique_matches
         WHERE COALESCE(killer_id, CASE WHEN role = 'killer' THEN character_id END) IS NOT NULL
           AND COALESCE(killer_id, CASE WHEN role = 'killer' THEN character_id END) != ''
       )
       GROUP BY patch_version, killer_id
     `),
 
-    // Unified Perk stats (Player loadout, killer loadout, and participants)
+    // Unified Perk stats (Player loadout, killer loadout, and participants from deduplicated matches)
     db.prepare(`
+      ${uniqueMatchesCte}
       INSERT INTO public_perk_stats (patch_version, role, perk_id, usage_count)
       SELECT
         patch_version,
@@ -178,7 +203,7 @@ export async function refreshStats(db: D1Database): Promise<void> {
           COALESCE(m.patch_version, 'unknown') as patch_version,
           m.role as role,
           perk.value as perk_id
-        FROM community_matches m
+        FROM unique_matches m
         JOIN community_match_loadouts l ON l.match_id = m.id
         JOIN json_each(l.perks_json) perk
         WHERE perk.value IS NOT NULL AND perk.value != ''
@@ -190,23 +215,30 @@ export async function refreshStats(db: D1Database): Promise<void> {
           COALESCE(m.patch_version, 'unknown') as patch_version,
           'killer' as role,
           perk.value as perk_id
-        FROM community_matches m
+        FROM unique_matches m
         JOIN community_match_loadouts l ON l.match_id = m.id
         JOIN json_each(l.killer_perks_json) perk
         WHERE m.role = 'survivor' AND perk.value IS NOT NULL AND perk.value != ''
 
         UNION ALL
 
-        -- Perks from match participants
+        -- Perks from match participants (excluding killer perks already counted via killer_perks_json)
         SELECT
           COALESCE(m.patch_version, 'unknown') as patch_version,
           p.role as role,
           perk.value as perk_id
-        FROM community_matches m
+        FROM unique_matches m
         JOIN community_match_participants p ON p.match_id = m.id
+        LEFT JOIN community_match_loadouts l ON l.match_id = m.id
         JOIN json_each(p.perks_json) perk
         WHERE p.role IN ('survivor', 'killer')
           AND perk.value IS NOT NULL AND perk.value != ''
+          AND NOT (
+            m.role = 'survivor'
+            AND p.role = 'killer'
+            AND l.killer_perks_json IS NOT NULL
+            AND l.killer_perks_json != '[]'
+          )
       )
       GROUP BY patch_version, role, perk_id
     `)
@@ -442,7 +474,10 @@ export default {
           env.DB.prepare(
             `INSERT INTO community_match_loadouts (
               match_id, perks_json, item_id, addons_json, offering_id, killer_perks_json
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (
+              (SELECT id FROM community_matches WHERE owner_id = ? AND match_hash = ?),
+              ?, ?, ?, ?, ?
+            )
             ON CONFLICT(match_id) DO UPDATE SET
               perks_json = excluded.perks_json,
               item_id = excluded.item_id,
@@ -450,7 +485,8 @@ export default {
               offering_id = excluded.offering_id,
               killer_perks_json = excluded.killer_perks_json`
           ).bind(
-            matchId,
+            account.id,
+            matchHash,
             JSON.stringify(match.player_perks),
             match.player_item,
             JSON.stringify(match.player_addons),
@@ -465,13 +501,18 @@ export default {
             env.DB.prepare(
               `INSERT INTO community_match_participants (
                 id, match_id, character_id, role, result, perks_json
-              ) VALUES (?, ?, ?, ?, ?, ?)
+              ) VALUES (
+                ?,
+                (SELECT id FROM community_matches WHERE owner_id = ? AND match_hash = ?),
+                ?, ?, ?, ?
+              )
               ON CONFLICT(match_id, character_id, role) DO UPDATE SET
                 result = excluded.result,
                 perks_json = excluded.perks_json`
             ).bind(
               crypto.randomUUID(),
-              matchId,
+              account.id,
+              matchHash,
               p.character_id,
               p.role,
               p.result,
@@ -494,26 +535,34 @@ export default {
 
     // ── 4. Estatísticas Agregadas para o Overlay UI ──
     if (request.method === "GET" && pathname === "/api/community-stats") {
-      let [charactersRes, mapsRes, killersRes, perksRes] = await Promise.all([
-        env.DB.prepare("SELECT role, character_id, match_count FROM public_character_stats").all<{
-          role: string;
-          character_id: string;
-          match_count: number;
-        }>(),
-        env.DB.prepare("SELECT role, map_id, match_count FROM public_map_stats").all<{
-          role: string;
-          map_id: string;
-          match_count: number;
-        }>(),
-        env.DB.prepare(
-          "SELECT killer_id, match_count, average_kills FROM public_killer_stats"
-        ).all<{ killer_id: string; match_count: number; average_kills: number }>(),
-        env.DB.prepare("SELECT role, perk_id, usage_count FROM public_perk_stats").all<{
-          role: string;
-          perk_id: string;
-          usage_count: number;
-        }>()
-      ]);
+      const fetchStatTables = () =>
+        Promise.all([
+          env.DB.prepare("SELECT role, character_id, match_count, escapes, kills, average_score FROM public_character_stats").all<{
+            role: string;
+            character_id: string;
+            match_count: number;
+            escapes: number;
+            kills: number;
+            average_score: number | null;
+          }>(),
+          env.DB.prepare("SELECT role, map_id, match_count, escapes, kills FROM public_map_stats").all<{
+            role: string;
+            map_id: string;
+            match_count: number;
+            escapes: number;
+            kills: number;
+          }>(),
+          env.DB.prepare(
+            "SELECT killer_id, match_count, kills, average_kills FROM public_killer_stats"
+          ).all<{ killer_id: string; match_count: number; kills: number; average_kills: number }>(),
+          env.DB.prepare("SELECT role, perk_id, usage_count FROM public_perk_stats").all<{
+            role: string;
+            perk_id: string;
+            usage_count: number;
+          }>()
+        ]);
+
+      let [charactersRes, mapsRes, killersRes, perksRes] = await fetchStatTables();
 
       let characterRows = charactersRes.results || [];
       let mapRows = mapsRes.results || [];
@@ -529,26 +578,7 @@ export default {
       ) {
         try {
           await refreshStats(env.DB);
-          [charactersRes, mapsRes, killersRes, perksRes] = await Promise.all([
-            env.DB.prepare("SELECT role, character_id, match_count FROM public_character_stats").all<{
-              role: string;
-              character_id: string;
-              match_count: number;
-            }>(),
-            env.DB.prepare("SELECT role, map_id, match_count FROM public_map_stats").all<{
-              role: string;
-              map_id: string;
-              match_count: number;
-            }>(),
-            env.DB.prepare(
-              "SELECT killer_id, match_count, average_kills FROM public_killer_stats"
-            ).all<{ killer_id: string; match_count: number; average_kills: number }>(),
-            env.DB.prepare("SELECT role, perk_id, usage_count FROM public_perk_stats").all<{
-              role: string;
-              perk_id: string;
-              usage_count: number;
-            }>()
-          ]);
+          [charactersRes, mapsRes, killersRes, perksRes] = await fetchStatTables();
           characterRows = charactersRes.results || [];
           mapRows = mapsRes.results || [];
           perkRows = perksRes.results || [];
@@ -562,24 +592,42 @@ export default {
         rows: any[],
         key: string,
         countKey = "match_count"
-      ): Array<{ value: string; count: number; pct: number }> => {
-        const groups = new Map<string, number>();
+      ): Array<{ value: string; count: number; pct: number; winrate?: number; average_kills?: number }> => {
+        const groups = new Map<string, { count: number; escapes: number; kills: number }>();
         for (const row of rows || []) {
           const value = row[key];
           if (!value) continue;
-          groups.set(value, (groups.get(value) || 0) + Number(row[countKey] || 0));
+          const prev = groups.get(value) || { count: 0, escapes: 0, kills: 0 };
+          prev.count += Number(row[countKey] || 0);
+          prev.escapes += Number(row.escapes || 0);
+          prev.kills += Number(row.kills || 0);
+          groups.set(value, prev);
         }
-        const total = [...groups.values()].reduce((sum, value) => sum + value, 0);
+        const total = [...groups.values()].reduce((sum, g) => sum + g.count, 0);
         return [...groups]
-          .map(([value, count]) => ({
-            value,
-            count,
-            pct: total ? Math.round((count * 1000) / total) / 10 : 0
-          }))
+          .map(([value, g]) => {
+            const item: { value: string; count: number; pct: number; winrate?: number; average_kills?: number } = {
+              value,
+              count: g.count,
+              pct: total ? Math.round((g.count * 1000) / total) / 10 : 0
+            };
+            if (countKey === "match_count" && g.count > 0) {
+              if (g.escapes > 0 || rows.some(r => r[key] === value && r.role === "survivor")) {
+                item.winrate = Math.round((g.escapes * 100) / g.count);
+              } else if (g.kills > 0 || rows.some(r => r[key] === value && r.role === "killer")) {
+                item.winrate = Math.round((g.kills * 100) / (g.count * 4));
+                item.average_kills = Math.round((g.kills / g.count) * 10) / 10;
+              }
+            }
+            return item;
+          })
           .sort((a, b) => b.count - a.count);
       };
 
+      const totalMatches = mapRows.reduce((sum, r) => sum + Number(r.match_count || 0), 0);
+
       const responseData = {
+        total_matches: totalMatches,
         characters: {
           survivor: aggregate(characterRows.filter(r => r.role === "survivor"), "character_id"),
           killer: aggregate(characterRows.filter(r => r.role === "killer"), "character_id")
@@ -587,11 +635,17 @@ export default {
         maps: aggregate(mapRows, "map_id"),
         killers: killerRows
           .filter(r => r.killer_id)
-          .map(r => ({
-            killer: r.killer_id,
-            count: Number(r.match_count || 0),
-            average_kills: r.average_kills ?? 0
-          }))
+          .map(r => {
+            const count = Number(r.match_count || 0);
+            const kills = Number(r.kills || 0);
+            const avgKills = r.average_kills ?? (count ? Math.round((kills / count) * 10) / 10 : 0);
+            return {
+              killer: r.killer_id,
+              count,
+              average_kills: avgKills,
+              winrate: count ? Math.round((avgKills / 4) * 100) : 0
+            };
+          })
           .sort((a, b) => b.count - a.count),
         perks: {
           survivor: aggregate(perkRows.filter(r => r.role === "survivor"), "perk_id", "usage_count"),

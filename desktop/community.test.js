@@ -8,6 +8,7 @@ import {
   ensureAnonymousCommunitySession,
   linkRecoveryEmailDirect,
   uploadCommunitySubmission,
+  uploadAllCommunityMatches,
   fetchCommunityStats
 } from "./community.js";
 
@@ -116,4 +117,77 @@ test("fetchCommunityStats fetches aggregated community data", async () => {
   });
 
   assert.deepEqual(stats, mockStats);
+});
+
+test("uploadAllCommunityMatches envia todas as partidas em lotes de até 100 e trata conflitos", async () => {
+  const store = {};
+  const mockStorage = {
+    getItem: k => store[k] ?? null,
+    setItem: (k, v) => { store[k] = v; }
+  };
+
+  const allMatches = Array.from({ length: 135 }, (_, i) => ({
+    source_id: `official-${1000 + i}`,
+    played_at: new Date(Date.UTC(2026, 8, 1, 0, i, 0)).toISOString(),
+    role: i % 2 === 0 ? "survivor" : "killer",
+    character: i % 2 === 0 ? "Meg Thomas" : "The Trapper",
+    map: "Family Residence",
+    result: i % 2 === 0 ? "ESCAPED" : "3K",
+    score: 25000,
+    killer_info: { killer: "The Trapper", kills_count: 3, perks: ["Agitation"] },
+    loadout: { perks: ["Sprint Burst"] },
+    participants: []
+  }));
+
+  const conflictId = "official-1005";
+  const uploadedIds = new Set();
+
+  const mockFetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    const batch = body.payload.matches;
+    if (batch.some(m => m.official_match_id === conflictId)) {
+      return {
+        ok: false,
+        status: 500,
+        json: async () => ({ error: "FOREIGN KEY constraint failed" })
+      };
+    }
+    for (const m of batch) {
+      assert.equal(m.kills_count, 3);
+      uploadedIds.add(m.official_match_id);
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ accepted: batch.length })
+    };
+  };
+
+  const res1 = await uploadAllCommunityMatches({
+    apiUrl: "https://dbd-community.example.workers.dev",
+    accessToken: "dbd_test_token_all",
+    matches: allMatches,
+    storage: mockStorage,
+    fetchImpl: mockFetch
+  });
+
+  assert.equal(res1.total, 135);
+  assert.equal(res1.uploaded, 134);
+  assert.equal(res1.skipped, 1);
+  assert.equal(uploadedIds.size, 134);
+
+  // Segunda chamada não deve reenviar partidas já sincronizadas
+  let fetchCalled = false;
+  const res2 = await uploadAllCommunityMatches({
+    apiUrl: "https://dbd-community.example.workers.dev",
+    accessToken: "dbd_test_token_all",
+    matches: allMatches,
+    storage: mockStorage,
+    fetchImpl: async () => {
+      fetchCalled = true;
+      return { ok: true, json: async () => ({ accepted: 0 }) };
+    }
+  });
+  assert.equal(fetchCalled, false);
+  assert.equal(res2.skipped, 135);
 });

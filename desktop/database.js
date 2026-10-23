@@ -708,6 +708,30 @@ export async function topCharacters(db) {
   return [];
 }
 
+export async function allSavedMatches(db) {
+  const userEmail = db.userEmail ?? null;
+  if (db.type === "sqlite") {
+    const rows = userEmail
+      ? db.db.prepare("SELECT * FROM matches WHERE user_email = ? OR user_email IS NULL ORDER BY played_at ASC").all(userEmail)
+      : db.db.prepare("SELECT * FROM matches ORDER BY played_at ASC").all();
+    const getLoadout = db.db.prepare("SELECT * FROM loadouts WHERE match_id=?");
+    const getKiller = db.db.prepare("SELECT * FROM killer_info WHERE match_id=?");
+    const getParticipants = db.db.prepare("SELECT * FROM participants WHERE match_id=?");
+    return rows.map(match => {
+      const loadout = getLoadout.get(match.id);
+      const killer = getKiller.get(match.id);
+      const participants = getParticipants.all(match.id);
+      return {
+        ...match,
+        loadout: { perks: parse(loadout?.perks_json), item: loadout?.item, addons: parse(loadout?.addons_json), offering: loadout?.offering },
+        killer_info: killer ? { killer: killer.killer, kills_count: killer.kills_count, perks: parse(killer.perks_json), addons: parse(killer.addons_json), offering: killer.offering } : null,
+        participants: participants.map(p => ({ ...p, perks: parse(p.perks_json), addons: parse(p.addons_json) }))
+      };
+    });
+  }
+  return matches(db, 10000);
+}
+
 export async function matches(db, limit = 100) {
   const userEmail = db.userEmail ?? null;
   const images = await catalog(db);
@@ -931,15 +955,19 @@ export async function killers(db, global = false) {
   for (const row of rows) {
     const name = row.killer;
     if (!groups.has(name)) {
-      groups.set(name, { count: 0, wins: 0 });
+      groups.set(name, { count: 0, wins: 0, personalEscapes: 0, totalKills: 0 });
     }
     const g = groups.get(name);
     g.count++;
 
     const kills = row.kills_count != null ? row.kills_count : 2;
+    g.totalKills += kills;
     const escapes = 4 - kills;
     if (escapes >= 3) {
       g.wins++;
+    }
+    if (/escaped|escape|fugiu|win/i.test(row.result ?? "")) {
+      g.personalEscapes++;
     }
   }
 
@@ -948,11 +976,15 @@ export async function killers(db, global = false) {
   return [...groups].map(([name, stats]) => {
     const pct = percentage(stats.count, total);
     const winrate = stats.count ? Math.round(stats.wins * 100 / stats.count) : 0;
+    const escape_rate = stats.count ? Math.round(stats.personalEscapes * 100 / stats.count) : 0;
+    const avg_kills = stats.count ? Math.round((stats.totalKills / stats.count) * 10) / 10 : 0;
     return {
       killer: name,
       count: stats.count,
       pct,
       winrate,
+      escape_rate,
+      avg_kills,
       image: images.get(name)
     };
   }).sort((a, b) => b.count - a.count);
@@ -965,13 +997,13 @@ export async function maps(db, global = false) {
   if (db.type === "sqlite") {
     const query = userEmail
       ? `
-      SELECT m.map, m.role, m.result, m.map_realm, k.kills_count, m.id, m.raw_json
+      SELECT m.map, m.role, m.result, m.map_realm, m.character, k.kills_count, k.killer, m.id, m.raw_json
       FROM matches m
       LEFT JOIN killer_info k ON m.id = k.match_id
       WHERE m.map IS NOT NULL AND m.user_email = ?
     `
       : `
-      SELECT m.map, m.role, m.result, m.map_realm, k.kills_count, m.id, m.raw_json
+      SELECT m.map, m.role, m.result, m.map_realm, m.character, k.kills_count, k.killer, m.id, m.raw_json
       FROM matches m
       LEFT JOIN killer_info k ON m.id = k.match_id
       WHERE m.map IS NOT NULL
@@ -980,7 +1012,7 @@ export async function maps(db, global = false) {
   } else {
     let query = db.client
       .from("matches")
-      .select("map, role, result, map_realm, id, raw_json, killer_info(kills_count)")
+      .select("map, role, result, map_realm, character, id, raw_json, killer_info(kills_count, killer)")
       .not("map", "is", null);
     if (userEmail) {
       query = query.eq("user_email", userEmail);
@@ -991,9 +1023,11 @@ export async function maps(db, global = false) {
       role: row.role,
       result: row.result,
       map_realm: row.map_realm,
+      character: row.character,
       id: row.id,
       raw_json: row.raw_json,
-      kills_count: row.killer_info?.[0]?.kills_count ?? null
+      kills_count: row.killer_info?.[0]?.kills_count ?? null,
+      killer: row.killer_info?.[0]?.killer ?? null
     }));
   }
 
@@ -1027,25 +1061,53 @@ export async function maps(db, global = false) {
     }
     const name = row.map;
     if (!groups.has(name)) {
-      groups.set(name, { count: 0, wins: 0, realm: row.map_realm });
+      groups.set(name, {
+        count: 0,
+        wins: 0,
+        realm: row.map_realm,
+        surv_count: 0,
+        surv_wins: 0,
+        surv_escapes: 0,
+        killer_count: 0,
+        killer_wins: 0,
+        killer_kills: 0,
+        killersMap: new Map()
+      });
     }
     const g = groups.get(name);
     g.count++;
 
+    const playerEscaped = /escaped|escape|fugiu|win/i.test(row.result ?? "") ? 1 : 0;
     let kills = null;
     if (row.kills_count != null) {
       kills = row.kills_count;
     } else {
-      const playerEscaped = /escaped|escape|fugiu|win/i.test(row.result ?? "") ? 1 : 0;
       const otherEscapes = participantsCountMap.get(row.id) || 0;
       kills = 4 - (playerEscaped + otherEscapes);
     }
 
     const escapes = 4 - kills;
+    const killerName = row.killer || (row.role === "killer" ? row.character : null);
+    if (killerName) {
+      g.killersMap.set(killerName, (g.killersMap.get(killerName) || 0) + 1);
+    }
+
     if (row.role === "survivor") {
-      if (escapes >= 3) g.wins++;
+      g.surv_count++;
+      if (escapes >= 3) {
+        g.wins++;
+        g.surv_wins++;
+      }
+      if (playerEscaped) {
+        g.surv_escapes++;
+      }
     } else if (row.role === "killer") {
-      if (kills >= 3) g.wins++;
+      g.killer_count++;
+      g.killer_kills += kills;
+      if (kills >= 3) {
+        g.wins++;
+        g.killer_wins++;
+      }
     }
   }
 
@@ -1057,20 +1119,40 @@ export async function maps(db, global = false) {
   return [...groups].map(([name, stats]) => {
     const pct = percentage(stats.count, total);
     const winrate = stats.count ? Math.round(stats.wins * 100 / stats.count) : 0;
+    const surv_winrate = stats.surv_count ? Math.round(stats.surv_wins * 100 / stats.surv_count) : null;
+    const surv_escape_rate = stats.surv_count ? Math.round(stats.surv_escapes * 100 / stats.surv_count) : null;
+    const killer_winrate = stats.killer_count ? Math.round(stats.killer_wins * 100 / stats.killer_count) : null;
+    const avg_kills = stats.killer_count ? Math.round((stats.killer_kills / stats.killer_count) * 10) / 10 : null;
+    let top_killer = null;
+    let topKillerCount = 0;
+    for (const [kName, kCount] of stats.killersMap.entries()) {
+      if (kCount > topKillerCount) {
+        topKillerCount = kCount;
+        top_killer = kName;
+      }
+    }
     return {
       map: name,
       count: stats.count,
       pct,
       winrate,
+      surv_count: stats.surv_count,
+      surv_winrate,
+      surv_escape_rate,
+      killer_count: stats.killer_count,
+      killer_winrate,
+      avg_kills,
+      top_killer,
       realm: stats.realm,
       image: images.get(name)
     };
   }).sort((a, b) => b.count - a.count);
 }
 
-export async function perks(db, scope = "against", global = false) {
+export async function perks(db, scope = "against", global = false, period = "all-time") {
   const userEmail = global ? null : (db.userEmail ?? null);
   const images = (await catalog(db)).perks;
+  const targetPeriod = period === "30-days" ? "30-days" : "all-time";
 
   if (!global && (scope === "own-survivor" || scope === "own-killer")) {
     const roleTarget = scope === "own-survivor" ? "perks-survivor" : "perks-killer";
@@ -1080,9 +1162,9 @@ export async function perks(db, scope = "against", global = false) {
       officialRow = db.db.prepare(
         `SELECT raw_json FROM official_sections 
          WHERE user_email = ? AND role = ? 
-         ORDER BY (CASE WHEN period='all-time' THEN 1 WHEN period='30-days' THEN 2 ELSE 3 END) ASC 
+         ORDER BY (CASE WHEN period=? THEN 0 WHEN period='all-time' THEN 1 WHEN period='30-days' THEN 2 ELSE 3 END) ASC 
          LIMIT 1`
-      ).get(emailKey, roleTarget);
+      ).get(emailKey, roleTarget, targetPeriod);
     } else {
       const { data } = check(await db.client
         .from("official_sections")
@@ -1091,7 +1173,7 @@ export async function perks(db, scope = "against", global = false) {
         .eq("role", roleTarget)
         .limit(2));
       if (data && data.length) {
-        officialRow = data.find(d => d.period === "all-time") || data[0];
+        officialRow = data.find(d => d.period === targetPeriod) || data.find(d => d.period === "all-time") || data[0];
       }
     }
 
@@ -1216,10 +1298,11 @@ export async function perks(db, scope = "against", global = false) {
   return [...counts].map(([perk, count]) => ({ perk, image: images.get(perk), count, pct: percentage(count, rows.length) })).sort((a, b) => b.count - a.count);
 }
 
-export async function characters(db, role = "all") {
+export async function characters(db, role = "all", period = "all-time") {
   const userEmail = db.userEmail ?? "default";
   const images = (await catalog(db)).characters;
   const rolesToFetch = role === "survivor" ? ["characters-survivor"] : role === "killer" ? ["characters-killer"] : ["characters-survivor", "characters-killer"];
+  const targetPeriod = period === "30-days" ? "30-days" : "all-time";
   let results = [];
 
   if (db.type === "sqlite") {
@@ -1227,9 +1310,9 @@ export async function characters(db, role = "all") {
       const row = db.db.prepare(
         `SELECT raw_json FROM official_sections 
          WHERE user_email = ? AND role = ? 
-         ORDER BY (CASE WHEN period='all-time' THEN 1 WHEN period='30-days' THEN 2 ELSE 3 END) ASC 
+         ORDER BY (CASE WHEN period=? THEN 0 WHEN period='all-time' THEN 1 WHEN period='30-days' THEN 2 ELSE 3 END) ASC 
          LIMIT 1`
-      ).get(userEmail, r);
+      ).get(userEmail, r, targetPeriod);
       if (row && row.raw_json) {
         const list = typeof row.raw_json === "string" ? parse(row.raw_json) : row.raw_json;
         if (Array.isArray(list)) {
@@ -1258,7 +1341,7 @@ export async function characters(db, role = "all") {
         .eq("user_email", userEmail)
         .eq("role", r)
         .limit(2));
-      const row = (data || []).find(d => d.period === "all-time") || (data || [])[0];
+      const row = (data || []).find(d => d.period === targetPeriod) || (data || []).find(d => d.period === "all-time") || (data || [])[0];
       if (row && row.raw_json) {
         const list = typeof row.raw_json === "string" ? parse(row.raw_json) : row.raw_json;
         if (Array.isArray(list)) {

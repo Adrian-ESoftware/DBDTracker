@@ -19,5 +19,9 @@ contextBridge.exposeInMainWorld("dbd", {
   onMapCheckEvent: callback => ipcRenderer.on("map-check-event", (_, value) => callback(value)),
   getOverlaySettings: () => ipcRenderer.invoke("get-overlay-settings"),
   saveOverlaySettings: settings => ipcRenderer.invoke("save-overlay-settings", settings),
-  showMapPreview: () => ipcRenderer.invoke("show-map-preview")
+  showMapPreview: () => ipcRenderer.invoke("show-map-preview"),
+  updaterStatus: () => ipcRenderer.invoke("updater-status"),
+  checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
+  installUpdate: () => ipcRenderer.invoke("install-update"),
+  onUpdaterStatus: callback => ipcRenderer.on("updater-status", (_, value) => callback(value))
 });

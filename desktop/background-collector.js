@@ -557,7 +557,7 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
       }
 
       // 4. Histórico de Partidas
-      const historyUrl = `https://account-backend.bhvr.com/player-stats/match-history/games/dbd/providers/${provider}?lang=en&limit=10`;
+      const historyUrl = `https://account-backend.bhvr.com/player-stats/match-history/games/dbd/providers/${provider}?lang=en&limit=100`;
       try {
         const historyRes = await fetchApi(historyUrl, token);
         if (historyRes.status === 401) throw new Error("UNAUTHORIZED");

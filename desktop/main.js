@@ -10,11 +10,12 @@ if (existsSync(envPath)) {
 } else {
   config(); // fallback padrão
 }
-import { app, BrowserWindow, globalShortcut, ipcMain, dialog, Tray, Menu, nativeImage, screen } from "electron";
-import { openDatabase } from "./database.js";
+import { app, BrowserWindow, globalShortcut, ipcMain, dialog, Tray, Menu, nativeImage, screen, shell } from "electron";
+import { openDatabase, allSavedMatches } from "./database.js";
 import { startServer } from "./server.js";
 import { createBackgroundCollector } from "./background-collector.js";
-import { createCommunityAuth, ensureAnonymousCommunitySession, linkRecoveryEmailDirect, uploadCommunitySubmission } from "./community.js";
+import { createCommunityAuth, ensureAnonymousCommunitySession, linkRecoveryEmailDirect, uploadAllCommunityMatches } from "./community.js";
+import { createAutoUpdater } from "./updater.js";
 
 function loadCommunityConfig() {
   try {
@@ -112,6 +113,9 @@ let mapCheckBuffer = "";
 let mapCheckStatus = { status: "disabled", monitor: null, wip: true };
 let mapOverlayWindow = null;
 let communityAuth = null;
+let communityStorage = null;
+let appDb = null;
+let updater = null;
 let communityState = { configured: false, enabled: false, syncing: false, email: null, pendingEmail: null, officialEmail: null, emailConfirmed: false, message: "Contribuição desativada." };
 const mapOverlaysPath = join(import.meta.dirname, "map_overlays");
 const mapCatalogPath = join(import.meta.dirname, "dbd-map-catalog.json");
@@ -240,10 +244,15 @@ const isMinimizedArg = process.argv.includes("--minimized");
 function applyStartWithSystem(enabled, startMinimized) {
   if (process.platform === "win32" || process.platform === "darwin") {
     try {
-      app.setLoginItemSettings({
+      const loginSettings = {
         openAtLogin: !!enabled,
         openAsHidden: !!startMinimized
-      });
+      };
+      if (process.platform === "win32" && process.env.PORTABLE_EXECUTABLE_FILE) {
+        loginSettings.path = process.env.PORTABLE_EXECUTABLE_FILE;
+        if (startMinimized) loginSettings.args = ["--minimized"];
+      }
+      app.setLoginItemSettings(loginSettings);
     } catch (err) {
       console.warn("[Main] Falha ao configurar app.setLoginItemSettings:", err.message);
     }
@@ -333,17 +342,46 @@ function createWindow() {
   });
 }
 
+function refreshTrayMenu() {
+  if (!tray) return;
+  const upState = updater ? updater.getState() : null;
+  const items = [
+    { label: `Abrir DBD Tracker (v${app.getVersion()})`, click: () => { window.show(); window.focus(); } },
+    { type: "separator" }
+  ];
+  if (upState && upState.status === "downloaded") {
+    items.push({
+      label: `Atualizar e Reiniciar (v${upState.latestVersion})`,
+      click: () => updater.installUpdateNow()
+    });
+  } else {
+    items.push({
+      label: upState && upState.status === "downloading"
+        ? `Baixando atualização (${upState.progress || 0}%)...`
+        : "Verificar Atualizações...",
+      enabled: !upState || upState.status !== "downloading",
+      click: () => {
+        if (window && !window.isDestroyed()) {
+          window.show();
+          window.focus();
+        }
+        updater?.checkForUpdates({ autoDownload: true });
+      }
+    });
+  }
+  items.push(
+    { type: "separator" },
+    { label: "Sair", click: () => { isQuitting = true; app.quit(); } }
+  );
+  tray.setContextMenu(Menu.buildFromTemplate(items));
+}
+
 function createTray() {
   const iconPath = join(import.meta.dirname, "tray_icons", "Icon.png");
   const icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
   tray = new Tray(icon);
-  const contextMenu = Menu.buildFromTemplate([
-    { label: "Abrir DBD Tracker", click: () => { window.show(); window.focus(); } },
-    { type: "separator" },
-    { label: "Sair", click: () => { isQuitting = true; app.quit(); } }
-  ]);
-  tray.setToolTip("DBD Tracker Overlay");
-  tray.setContextMenu(contextMenu);
+  tray.setToolTip(`DBD Tracker Overlay v${app.getVersion()}`);
+  refreshTrayMenu();
   tray.on("click", () => {
     window.isVisible() ? window.hide() : (window.show(), window.focus());
   });
@@ -610,12 +648,47 @@ function positionOverlayWindow() {
   mapOverlayWindow.setPosition(posX, posY);
 }
 
+async function syncAllMatchesToCommunity(db, extraMatches = []) {
+  if (!userConfig.communityOptIn || !communityAuth || communityState.syncing) return communityState;
+  try {
+    const saved = db ? await allSavedMatches(db) : [];
+    const combined = [...saved, ...(Array.isArray(extraMatches) ? extraMatches : [])];
+    if (combined.length === 0) return communityState;
+
+    communityState.syncing = true;
+    communityState.message = `Sincronizando ${combined.length} partida(s) salva(s)...`;
+    if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+
+    const session = await ensureAnonymousCommunitySession(communityAuth);
+    const result = await uploadAllCommunityMatches({
+      apiUrl: communityConfig.apiUrl,
+      accessToken: session.access_token,
+      matches: combined,
+      storage: communityStorage,
+      onProgress: ({ uploaded, skipped, total }) => {
+        communityState.message = `Sincronizando partidas (${uploaded + skipped}/${total})...`;
+        if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+      }
+    });
+    communityState.message = `${result.total} partida(s) sincronizada(s) na comunidade.`;
+  } catch (error) {
+    communityState.message = error.message.startsWith("Falha na sincronização")
+      ? error.message
+      : `Falha na sincronização: ${error.message}`;
+  } finally {
+    communityState.syncing = false;
+    if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+  }
+  return communityState;
+}
+
 app.whenReady().then(() => {
   loadUserConfig();
 
+  communityStorage = createCommunityStorage();
   communityAuth = createCommunityAuth({
     apiUrl: communityConfig.apiUrl,
-    storage: createCommunityStorage()
+    storage: communityStorage
   });
   communityState.configured = !!communityAuth;
   communityState.enabled = !!userConfig.communityOptIn;
@@ -632,6 +705,7 @@ app.whenReady().then(() => {
   }
 
   const db = openDatabase(join(app.getPath("userData"), "dbd_tracker.sqlite3"));
+  appDb = db;
   console.log(`[Main] Banco de dados local: ${db.type}. O banco comunitário é acessado exclusivamente pela API segura.`);
 
   if (userConfig.userEmail) {
@@ -641,6 +715,29 @@ app.whenReady().then(() => {
 
   // Mostra a janela o mais rápido possível
   createWindow();
+
+  updater = createAutoUpdater({
+    currentVersion: app.getVersion(),
+    userDataPath: app.getPath("userData"),
+    platform: process.platform,
+    env: process.env,
+    execPath: process.execPath,
+    isPackaged: app.isPackaged,
+    onStatusChange: state => {
+      if (window && !window.isDestroyed()) {
+        window.webContents.send("updater-status", state);
+      }
+      refreshTrayMenu();
+    },
+    onQuitAndInstall: () => {
+      isQuitting = true;
+      app.quit();
+    },
+    onOpenExternal: url => {
+      shell.openExternal(url).catch(() => {});
+    }
+  });
+
   createTray();
 
   // Adia operações pesadas para após a janela aparecer (startup mais rápido)
@@ -652,28 +749,19 @@ app.whenReady().then(() => {
         window.webContents.send("collector-status", state);
       }
     }, async newMatches => {
-      if (!userConfig.communityOptIn || !communityAuth) return;
-      try {
-        communityState.syncing = true;
-        communityState.message = "Enviando dados anônimos...";
-        const session = await ensureAnonymousCommunitySession(communityAuth);
-        await uploadCommunitySubmission({
-          apiUrl: communityConfig.apiUrl,
-          accessToken: session.access_token,
-          matches: newMatches
-        });
-        communityState.message = `${newMatches.length} partida(s) sincronizada(s).`;
-      } catch (error) {
-        communityState.message = error.message.startsWith("Falha na sincronização")
-          ? error.message
-          : `Falha na sincronização: ${error.message}`;
-      } finally {
-        communityState.syncing = false;
-        if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
-      }
+      await syncAllMatchesToCommunity(db, newMatches);
     });
+    // Sincroniza todas as partidas salvas localmente com a nuvem ao iniciar
+    setTimeout(() => {
+      syncAllMatchesToCommunity(db).catch(() => {});
+    }, 1500);
     // Inicia o coletor 2s após a janela aparecer para não travar a UI
     setTimeout(() => collector.start(), 2000);
+    // Verifica atualizações automaticamente no GitHub Releases 4s após iniciar
+    setTimeout(() => {
+      updater?.checkForUpdates({ autoDownload: true }).catch(() => {});
+      updater?.startPeriodicChecks(2 * 60 * 60 * 1000);
+    }, 4000);
     // Inicia o detector de mapas (WIP: desativado no software até conclusão do catálogo)
     if (!MAP_CHECK_WIP) {
       setTimeout(() => startMapCheck(), 1000);
@@ -731,6 +819,9 @@ ipcMain.handle("set-community-opt-in", async (_, enabled) => {
   communityState.enabled = !!enabled;
   communityState.message = enabled ? "Contribuição anônima ativada." : "Contribuição desativada.";
   saveUserConfig();
+  if (enabled && appDb) {
+    syncAllMatchesToCommunity(appDb).catch(() => {});
+  }
   return communityState;
 });
 ipcMain.handle("link-community-email", async (_, email) => {
@@ -765,6 +856,17 @@ ipcMain.handle("link-community-email", async (_, email) => {
 ipcMain.handle("show-map-preview", () => {
   createMapOverlayWindow("DVARKA DEEPWOOD - TOBA LANDING");
   return true;
+});
+ipcMain.handle("updater-status", () => {
+  return updater ? updater.getState() : { status: "idle", currentVersion: app.getVersion(), message: `Versão v${app.getVersion()}` };
+});
+ipcMain.handle("check-for-updates", async () => {
+  if (!updater) return { status: "idle", currentVersion: app.getVersion() };
+  return await updater.checkForUpdates({ autoDownload: true });
+});
+ipcMain.handle("install-update", () => {
+  if (!updater) return { installed: false };
+  return updater.installUpdateNow();
 });
 ipcMain.handle("toggle-size", () => {
   compact = !compact;
@@ -841,6 +943,8 @@ ipcMain.handle("save-overlay-settings", (_, settings) => {
 });
 app.on("before-quit", () => {
   isQuitting = true;
+  updater?.stopPeriodicChecks();
+  updater?.applyUpdateOnQuit();
   collector?.stop();
   if (mapCheckProcess && !mapCheckProcess.killed) {
     mapCheckProcess.kill();
