@@ -140,14 +140,114 @@ export class CommunityClient {
       fetchImpl: this.fetch
     });
 
+    if (result.token) {
+      session.token = result.token;
+      session.access_token = result.token;
+    }
+    if (result.user_id) {
+      session.user_id = result.user_id;
+    }
     session.email = result.email || email;
     session.email_confirmed = !!result.email_confirmed;
     if (session.user) {
+      session.user.id = session.user_id;
       session.user.email = session.email;
       session.user.email_confirmed_at = session.email_confirmed ? new Date().toISOString() : null;
     }
     this.saveStoredSession(session);
     return result;
+  }
+
+  async recoverAccount(email) {
+    if (!this.baseUrl) throw new Error("Community API is not configured");
+    const endpoint = `${this.baseUrl}/api/auth/recover`;
+    const res = await this.fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email })
+    });
+    let data = {};
+    try { data = await res.json(); } catch {}
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    const session = {
+      token: data.token,
+      access_token: data.token,
+      user_id: data.user_id,
+      email: data.email,
+      email_confirmed: !!data.email_confirmed,
+      user: {
+        id: data.user_id,
+        email: data.email,
+        email_confirmed_at: new Date().toISOString()
+      }
+    };
+    this.saveStoredSession(session);
+    return { ...data, session };
+  }
+
+  async getCloudBackupSummary() {
+    if (!this.baseUrl) return null;
+    const session = await this.getSession();
+    if (!session?.token) return null;
+    const endpoint = `${this.baseUrl}/api/user/backup-summary`;
+    try {
+      const res = await this.fetch(endpoint, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json"
+        }
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async restoreUserMatches({ onProgress } = {}) {
+    if (!this.baseUrl) throw new Error("Community API is not configured");
+    const session = await this.ensureSession();
+    const limit = 500;
+    let offset = 0;
+    let allMatches = [];
+    let total = 0;
+
+    while (true) {
+      const endpoint = `${this.baseUrl}/api/user/matches?limit=${limit}&offset=${offset}`;
+      const res = await this.fetch(endpoint, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json"
+        }
+      });
+      let data = {};
+      try { data = await res.json(); } catch {}
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      total = data.total || 0;
+      const batch = Array.isArray(data.matches) ? data.matches : [];
+      if (batch.length === 0) break;
+
+      for (const m of batch) {
+        allMatches.push(normalizeCloudMatch(m));
+      }
+
+      if (typeof onProgress === "function") {
+        onProgress({ downloaded: allMatches.length, total });
+      }
+
+      if (!data.has_more || allMatches.length >= total) {
+        break;
+      }
+      offset += batch.length;
+    }
+
+    return { matches: allMatches, total };
   }
 
   async fetchStats() {
@@ -442,4 +542,124 @@ export async function fetchCommunityStats({ apiUrl, fetchImpl = fetch }) {
     throw new Error(`Falha ao obter estatísticas da comunidade: ${body.error || response.status}`);
   }
   return body;
+}
+
+
+export function normalizeCloudMatch(m) {
+  if (!m) return null;
+  const loadout = m.loadout || {};
+  const killerInfo = m.killer_info || {};
+  const perks = Array.isArray(loadout.perks) ? loadout.perks : (Array.isArray(m.player_perks) ? m.player_perks : []);
+  const addons = Array.isArray(loadout.addons) ? loadout.addons : (Array.isArray(m.player_addons) ? m.player_addons : []);
+  const killerPerks = Array.isArray(killerInfo.perks) ? killerInfo.perks : (Array.isArray(m.killer_perks) ? m.killer_perks : []);
+
+  const hasKiller = killerInfo.killer || m.killer_id || killerInfo.kills_count !== null || m.kills_count !== null || killerPerks.length > 0;
+
+  return {
+    id: m.id,
+    source_id: m.source_id ?? m.official_match_id ?? null,
+    played_at: m.played_at,
+    role: m.role,
+    character: m.character ?? m.character_id ?? null,
+    map: m.map ?? m.map_id ?? null,
+    map_realm: m.map_realm ?? null,
+    duration_sec: m.duration_sec ?? null,
+    result: m.result ?? null,
+    score: m.score ?? null,
+    loadout: {
+      perks,
+      item: loadout.item ?? m.player_item ?? null,
+      addons,
+      offering: loadout.offering ?? m.player_offering ?? null
+    },
+    killer_info: hasKiller ? {
+      killer: killerInfo.killer ?? m.killer_id ?? null,
+      kills_count: killerInfo.kills_count ?? m.kills_count ?? null,
+      perks: killerPerks,
+      addons: Array.isArray(killerInfo.addons) ? killerInfo.addons : [],
+      offering: killerInfo.offering ?? null
+    } : undefined,
+    participants: Array.isArray(m.participants) ? m.participants.map(p => ({
+      character: p.character ?? p.character_id ?? null,
+      role: p.role ?? "survivor",
+      result: p.result ?? null,
+      score: p.score ?? null,
+      perks: Array.isArray(p.perks) ? p.perks : [],
+      addons: Array.isArray(p.addons) ? p.addons : [],
+      item: p.item ?? null,
+      offering: p.offering ?? null
+    })) : []
+  };
+}
+
+export async function recoverCommunityAccountDirect({ apiUrl, email, fetchImpl = fetch }) {
+  if (!apiUrl || !email) throw new Error("community API and email are required");
+  const base = resolveBaseUrl(apiUrl);
+  const response = await fetchImpl(`${base}/api/auth/recover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email })
+  });
+  let body = {};
+  try { body = await response.json(); } catch {}
+  if (!response.ok) {
+    throw new Error(body.error || `HTTP ${response.status}`);
+  }
+  return body;
+}
+
+export async function fetchCloudBackupSummaryDirect({ apiUrl, accessToken, fetchImpl = fetch }) {
+  if (!apiUrl || !accessToken) return null;
+  const base = resolveBaseUrl(apiUrl);
+  const response = await fetchImpl(`${base}/api/user/backup-summary`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    }
+  });
+  if (!response.ok) return null;
+  try { return await response.json(); } catch { return null; }
+}
+
+export async function restoreCommunityMatchesDirect({ apiUrl, accessToken, fetchImpl = fetch, onProgress = null }) {
+  if (!apiUrl || !accessToken) throw new Error("community API and access token are required");
+  const base = resolveBaseUrl(apiUrl);
+  const limit = 500;
+  let offset = 0;
+  let allMatches = [];
+  let total = 0;
+
+  while (true) {
+    const res = await fetchImpl(`${base}/api/user/matches?limit=${limit}&offset=${offset}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      }
+    });
+    let data = {};
+    try { data = await res.json(); } catch {}
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    total = data.total || 0;
+    const batch = Array.isArray(data.matches) ? data.matches : [];
+    if (batch.length === 0) break;
+
+    for (const m of batch) {
+      allMatches.push(normalizeCloudMatch(m));
+    }
+
+    if (typeof onProgress === "function") {
+      onProgress({ downloaded: allMatches.length, total });
+    }
+
+    if (!data.has_more || allMatches.length >= total) {
+      break;
+    }
+    offset += batch.length;
+  }
+
+  return { matches: allMatches, total };
 }

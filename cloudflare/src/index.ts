@@ -294,7 +294,75 @@ export default {
       );
     }
 
-    // ── 2. Vinculação de E-mail para Recuperação ──
+    // ── 2. Recuperação de Conta por E-mail ──
+    if (request.method === "POST" && pathname === "/api/auth/recover") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: "invalid_json" }, 400);
+      }
+
+      const email = typeof body?.email === "string" ? body.email.trim().slice(0, 320) : "";
+      if (!/^[^s@]+@[^s@]+.[^s@]+$/.test(email)) {
+        return json({ error: "invalid_email" }, 400);
+      }
+
+      // Procura contas com este e-mail ordenadas pela maior contagem de partidas
+      const candidateAccounts = await env.DB.prepare(`
+        SELECT a.id, a.email, COUNT(m.id) as match_count
+        FROM community_accounts a
+        LEFT JOIN community_matches m ON m.owner_id = a.id
+        WHERE LOWER(a.email) = LOWER(?)
+        GROUP BY a.id
+        ORDER BY match_count DESC, a.created_at ASC
+      `)
+        .bind(email)
+        .all<{ id: string; email: string; match_count: number }>();
+
+      const rows = candidateAccounts.results || [];
+      if (rows.length === 0) {
+        return json({ error: "account_not_found" }, 404);
+      }
+
+      const primary = rows[0];
+
+      // Se houver múltiplas contas com o mesmo e-mail, consolida na primária
+      for (let i = 1; i < rows.length; i++) {
+        const secondaryId = rows[i].id;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE OR IGNORE community_matches SET owner_id = ? WHERE owner_id = ?").bind(primary.id, secondaryId),
+          env.DB.prepare("DELETE FROM community_matches WHERE owner_id = ?").bind(secondaryId),
+          env.DB.prepare("UPDATE OR IGNORE community_submissions SET owner_id = ? WHERE owner_id = ?").bind(primary.id, secondaryId),
+          env.DB.prepare("DELETE FROM community_submissions WHERE owner_id = ?").bind(secondaryId),
+          env.DB.prepare("DELETE FROM community_accounts WHERE id = ?").bind(secondaryId)
+        ]);
+      }
+
+      const newToken = `dbd_${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "")}`;
+      const newTokenHash = await sha256Hex(newToken);
+
+      await env.DB.prepare(
+        "UPDATE community_accounts SET token_hash = ?, updated_at = datetime('now') WHERE id = ?"
+      )
+        .bind(newTokenHash, primary.id)
+        .run();
+
+      const totalRes = await env.DB.prepare(
+        "SELECT COUNT(*) as total FROM community_matches WHERE owner_id = ?"
+      ).bind(primary.id).first<{ total: number }>();
+
+      return json({
+        recovered: true,
+        token: newToken,
+        user_id: primary.id,
+        email: primary.email,
+        email_confirmed: true,
+        total_matches: totalRes?.total || 0
+      });
+    }
+
+    // ── 3. Vinculação de E-mail para Recuperação ──
     if (request.method === "POST" && pathname === "/api/auth/link-email") {
       const account = await authenticate(request, env);
       if (!account) return json({ error: "unauthorized" }, 401);
@@ -307,8 +375,54 @@ export default {
       }
 
       const email = typeof body?.email === "string" ? body.email.trim().slice(0, 320) : "";
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      if (!/^[^s@]+@[^s@]+.[^s@]+$/.test(email)) {
         return json({ error: "invalid_email" }, 400);
+      }
+
+      // Verifica se já existe outra conta com este e-mail
+      const existingAccount = await env.DB.prepare(`
+        SELECT a.id, a.email, COUNT(m.id) as match_count
+        FROM community_accounts a
+        LEFT JOIN community_matches m ON m.owner_id = a.id
+        WHERE LOWER(a.email) = LOWER(?) AND a.id != ?
+        GROUP BY a.id
+        ORDER BY match_count DESC, a.created_at ASC
+      `)
+        .bind(email, account.id)
+        .first<{ id: string; email: string; match_count: number }>();
+
+      if (existingAccount) {
+        // Consolida: move dados da conta temporária atual para a conta existente com o histórico
+        await env.DB.batch([
+          env.DB.prepare("UPDATE OR IGNORE community_matches SET owner_id = ? WHERE owner_id = ?").bind(existingAccount.id, account.id),
+          env.DB.prepare("DELETE FROM community_matches WHERE owner_id = ?").bind(account.id),
+          env.DB.prepare("UPDATE OR IGNORE community_submissions SET owner_id = ? WHERE owner_id = ?").bind(existingAccount.id, account.id),
+          env.DB.prepare("DELETE FROM community_submissions WHERE owner_id = ?").bind(account.id),
+          env.DB.prepare("DELETE FROM community_accounts WHERE id = ?").bind(account.id)
+        ]);
+
+        const newToken = `dbd_${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "")}`;
+        const newTokenHash = await sha256Hex(newToken);
+
+        await env.DB.prepare(
+          "UPDATE community_accounts SET token_hash = ?, updated_at = datetime('now') WHERE id = ?"
+        )
+          .bind(newTokenHash, existingAccount.id)
+          .run();
+
+        const totalRes = await env.DB.prepare(
+          "SELECT COUNT(*) as total FROM community_matches WHERE owner_id = ?"
+        ).bind(existingAccount.id).first<{ total: number }>();
+
+        return json({
+          linked: true,
+          email,
+          email_confirmed: true,
+          recovered: true,
+          token: newToken,
+          user_id: existingAccount.id,
+          total_matches: totalRes?.total || 0
+        });
       }
 
       await env.DB.prepare(
@@ -317,7 +431,7 @@ export default {
         .bind(email, account.id)
         .run();
 
-      return json({ linked: true, email, email_confirmed: true });
+      return json({ linked: true, email, email_confirmed: true, recovered: false });
     }
 
     // ── 3. Ingestão de Partidas ──
@@ -335,13 +449,45 @@ export default {
       // Compatibilidade retroativa para ação link_email
       if (submission?.action === "link_email") {
         const email = typeof submission.email === "string" ? submission.email.trim().slice(0, 320) : "";
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "invalid_email" }, 400);
+        if (!/^[^s@]+@[^s@]+.[^s@]+$/.test(email)) return json({ error: "invalid_email" }, 400);
+
+        const existingAccount = await env.DB.prepare(`
+          SELECT a.id, a.email, COUNT(m.id) as match_count
+          FROM community_accounts a
+          LEFT JOIN community_matches m ON m.owner_id = a.id
+          WHERE LOWER(a.email) = LOWER(?) AND a.id != ?
+          GROUP BY a.id
+          ORDER BY match_count DESC, a.created_at ASC
+        `)
+          .bind(email, account.id)
+          .first<{ id: string; email: string; match_count: number }>();
+
+        if (existingAccount) {
+          await env.DB.batch([
+            env.DB.prepare("UPDATE OR IGNORE community_matches SET owner_id = ? WHERE owner_id = ?").bind(existingAccount.id, account.id),
+            env.DB.prepare("DELETE FROM community_matches WHERE owner_id = ?").bind(account.id),
+            env.DB.prepare("UPDATE OR IGNORE community_submissions SET owner_id = ? WHERE owner_id = ?").bind(existingAccount.id, account.id),
+            env.DB.prepare("DELETE FROM community_submissions WHERE owner_id = ?").bind(account.id),
+            env.DB.prepare("DELETE FROM community_accounts WHERE id = ?").bind(account.id)
+          ]);
+          const newToken = `dbd_${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "")}`;
+          const newTokenHash = await sha256Hex(newToken);
+          await env.DB.prepare(
+            "UPDATE community_accounts SET token_hash = ?, updated_at = datetime('now') WHERE id = ?"
+          ).bind(newTokenHash, existingAccount.id).run();
+          const totalRes = await env.DB.prepare(
+            "SELECT COUNT(*) as total FROM community_matches WHERE owner_id = ?"
+          ).bind(existingAccount.id).first<{ total: number }>();
+
+          return json({ linked: true, email, email_confirmed: true, recovered: true, token: newToken, user_id: existingAccount.id, total_matches: totalRes?.total || 0 });
+        }
+
         await env.DB.prepare(
           "UPDATE community_accounts SET email = ?, updated_at = datetime('now') WHERE id = ?"
         )
           .bind(email, account.id)
           .run();
-        return json({ linked: true, email, email_confirmed: true });
+        return json({ linked: true, email, email_confirmed: true, recovered: false });
       }
 
       const matches = submission?.payload?.matches;
@@ -533,7 +679,157 @@ export default {
       return json({ accepted: clean.length });
     }
 
-    // ── 4. Estatísticas Agregadas para o Overlay UI ──
+    // ── 5. Resumo de Backup do Usuário ──
+    if (request.method === "GET" && pathname === "/api/user/backup-summary") {
+      const account = await authenticate(request, env);
+      if (!account) return json({ error: "unauthorized" }, 401);
+
+      const summary = await env.DB.prepare(`
+        SELECT
+          COUNT(*) as total_matches,
+          MAX(played_at) as last_match_at
+        FROM community_matches
+        WHERE owner_id = ?
+      `)
+        .bind(account.id)
+        .first<{ total_matches: number; last_match_at: string | null }>();
+
+      return json({
+        user_id: account.id,
+        email: account.email,
+        total_matches: summary?.total_matches || 0,
+        last_match_at: summary?.last_match_at || null
+      });
+    }
+
+    // ── 6. Download / Restauração das Partidas do Usuário ──
+    if (request.method === "GET" && pathname === "/api/user/matches") {
+      const account = await authenticate(request, env);
+      if (!account) return json({ error: "unauthorized" }, 401);
+
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 500), 1), 1000);
+      const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
+
+      const countRes = await env.DB.prepare(
+        "SELECT COUNT(*) as total FROM community_matches WHERE owner_id = ?"
+      )
+        .bind(account.id)
+        .first<{ total: number }>();
+      const total = countRes?.total || 0;
+
+      const matchesRes = await env.DB.prepare(`
+        SELECT
+          m.id,
+          m.official_match_id,
+          m.played_at,
+          m.role,
+          m.character_id,
+          m.map_id,
+          m.killer_id,
+          m.result,
+          m.kills_count,
+          m.duration_sec,
+          m.score,
+          l.perks_json,
+          l.item_id,
+          l.addons_json,
+          l.offering_id,
+          l.killer_perks_json
+        FROM community_matches m
+        LEFT JOIN community_match_loadouts l ON l.match_id = m.id
+        WHERE m.owner_id = ?
+        ORDER BY m.played_at ASC
+        LIMIT ? OFFSET ?
+      `)
+        .bind(account.id, limit, offset)
+        .all<any>();
+
+      const rows = matchesRes.results || [];
+      const matchIds = rows.map((r: any) => r.id);
+
+      const participantsByMatch = new Map<string, any[]>();
+      if (matchIds.length > 0) {
+        const P_CHUNK = 50;
+        for (let i = 0; i < matchIds.length; i += P_CHUNK) {
+          const slice = matchIds.slice(i, i + P_CHUNK);
+          const placeholders = slice.map(() => "?").join(",");
+          const pRes = await env.DB.prepare(
+            `SELECT match_id, character_id, role, result, perks_json FROM community_match_participants WHERE match_id IN (${placeholders})`
+          )
+            .bind(...slice)
+            .all<any>();
+
+          for (const p of pRes.results || []) {
+            if (!participantsByMatch.has(p.match_id)) {
+              participantsByMatch.set(p.match_id, []);
+            }
+            let perks = [];
+            try {
+              perks = JSON.parse(p.perks_json);
+            } catch {}
+            participantsByMatch.get(p.match_id)!.push({
+              character: p.character_id,
+              role: p.role,
+              result: p.result,
+              perks
+            });
+          }
+        }
+      }
+
+      const safeJson = (str: string | null) => {
+        if (!str) return [];
+        try {
+          return JSON.parse(str);
+        } catch {
+          return [];
+        }
+      };
+
+      const matches = rows.map((r: any) => {
+        const playerPerks = safeJson(r.perks_json);
+        const killerPerks = safeJson(r.killer_perks_json);
+        const playerAddons = safeJson(r.addons_json);
+        const participants = participantsByMatch.get(r.id) || [];
+
+        return {
+          id: r.id,
+          source_id: r.official_match_id,
+          played_at: r.played_at,
+          role: r.role,
+          character: r.character_id,
+          map: r.map_id,
+          duration_sec: r.duration_sec,
+          result: r.result,
+          score: r.score,
+          loadout: {
+            perks: playerPerks,
+            item: r.item_id,
+            addons: playerAddons,
+            offering: r.offering_id
+          },
+          killer_info:
+            r.killer_id || r.kills_count !== null || killerPerks.length > 0
+              ? {
+                  killer: r.killer_id,
+                  kills_count: r.kills_count,
+                  perks: killerPerks
+                }
+              : undefined,
+          participants
+        };
+      });
+
+      return json({
+        matches,
+        total,
+        offset,
+        limit,
+        has_more: offset + rows.length < total
+      });
+    }
+
+    // ── 7. Estatísticas Agregadas para o Overlay UI ──
     if (request.method === "GET" && pathname === "/api/community-stats") {
       const fetchStatTables = () =>
         Promise.all([

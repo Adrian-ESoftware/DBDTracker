@@ -486,13 +486,20 @@ h2:first-child{margin-top:2px}
       <div class="card" id="community-card" style="padding:12px; margin-bottom:12px; border:1px solid var(--accent-soft);">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
           <div>
-            <div style="font-weight:700; color:var(--text); font-size:11px;">Dados da comunidade</div>
-            <small style="color:var(--muted); font-size:9px; line-height:1.4;">Contribui partidas anonimizadas. O backup só pode ser recuperado se você vincular um e-mail.</small>
+            <div style="font-weight:700; color:var(--text); font-size:11px;">Nuvem e Dados da Comunidade</div>
+            <small style="color:var(--muted); font-size:9px; line-height:1.4;">Sincronização em nuvem e backup de partidas (Cloudflare D1).</small>
           </div>
           <input type="checkbox" id="setting-community-opt-in" style="accent-color:var(--red); cursor:pointer; width:14px; height:14px;">
         </div>
         <div id="community-status" style="color:var(--muted); font-size:9px; margin-top:8px;">Contribuição desativada.</div>
-        <button id="btn-community-backup" style="width:100%; margin-top:6px; padding:7px; background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:5px; cursor:pointer;">Vincular e-mail para recuperação</button>
+        <div id="community-cloud-info" style="font-size:9px; color:var(--muted); margin-top:4px; display:none;"></div>
+        <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
+          <button id="btn-community-backup" style="width:100%; padding:7px; background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:5px; cursor:pointer;">Vincular e-mail para recuperação</button>
+          <button id="btn-community-restore" style="width:100%; padding:7px; background:rgba(235,60,60,0.15); border:1px solid var(--red); color:var(--text); border-radius:5px; cursor:pointer; font-weight:600; display:flex; align-items:center; justify-content:center; gap:6px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Restaurar Partidas da Nuvem
+          </button>
+        </div>
       </div>
 
       <!-- CARD 1: TECLAS DE ATALHO -->
@@ -2137,36 +2144,99 @@ function applyTheme(theme) {
 function updateCommunityStatus(status) {
   if (!status) return;
   var email = status.email || status.pendingEmail;
-  var message = status.message || (status.configured ? 'Pronto.' : 'Configure a integração do Supabase.');
+  var message = status.message || (status.configured ? 'Pronto.' : 'Configure a integração da nuvem.');
   if (email && !status.emailConfirmed && !/confirma|enviando/i.test(message)) {
-    message = 'Confirmação pendente. Verifique a caixa de entrada de ' + email + '.';
+    message = 'E-mail vinculado: ' + email;
   }
   $('community-status').textContent = message;
   var backupButton = $('btn-community-backup');
   if (email) {
-    backupButton.textContent = 'Ver e-mail vinculado';
+    backupButton.textContent = 'E-mail vinculado: ' + email + ' (Alterar)';
     backupButton.onclick = function() {
-      var confirmation = status.emailConfirmed ? 'confirmado' : 'aguardando confirmação';
-      window.alert('E-mail vinculado: ' + email + '\nStatus: ' + confirmation + '.');
+      var novoEmail = window.prompt('Digite o novo e-mail para vincular ou recuperar seus dados:', email);
+      if (novoEmail && novoEmail.trim() && novoEmail.trim() !== email) {
+        linkCommunityEmailDirectly(novoEmail.trim());
+      }
     };
   } else {
     communityOfficialEmail = status.officialEmail || null;
-    backupButton.textContent = status.officialEmail ? 'Usar e-mail da conta Behaviour' : 'Concluir login Behaviour primeiro';
-    backupButton.onclick = linkCommunityEmail;
+    backupButton.textContent = status.officialEmail ? 'Vincular com e-mail da Behaviour (' + status.officialEmail + ')' : 'Vincular e-mail para recuperação';
+    backupButton.onclick = function() {
+      if (status.officialEmail) {
+        linkCommunityEmailDirectly(status.officialEmail);
+      } else {
+        var digitado = window.prompt('Digite seu e-mail para vincular/recuperar suas partidas da nuvem:');
+        if (digitado && digitado.trim()) {
+          linkCommunityEmailDirectly(digitado.trim());
+        }
+      }
+    };
+  }
+  refreshCloudBackupInfo();
+}
+
+function refreshCloudBackupInfo() {
+  if (window.dbd && window.dbd.getCloudBackupSummary) {
+    window.dbd.getCloudBackupSummary().then(function(summary) {
+      if (!summary) return;
+      var el = $('community-cloud-info');
+      if (el) {
+        el.style.display = 'block';
+        el.textContent = 'Partidas na Nuvem: ' + (summary.total_matches || 0) + ' | Partidas no PC: ' + (summary.local_matches || 0);
+      }
+    }).catch(function() {});
   }
 }
-function linkCommunityEmail() {
-  var email = communityOfficialEmail;
-  if (!email) {
-    updateCommunityStatus({ message: 'E-mail da Behaviour não encontrado. Conclua o login oficial e atualize os dados.' });
-    return;
-  }
+
+function linkCommunityEmailDirectly(email) {
+  if (!email) return;
   $('btn-community-backup').disabled = true;
-  updateCommunityStatus({ email: email.trim(), message: 'Enviando confirmação para o e-mail informado...' });
-  window.dbd.linkCommunityEmail(email).then(updateCommunityStatus).catch(function(error) {
+  updateCommunityStatus({ message: 'Vinculando e verificando histórico na nuvem...' });
+  window.dbd.linkCommunityEmail(email).then(function(res) {
+    updateCommunityStatus(res);
+    refreshCloudBackupInfo();
+    if (res && res.recovered && res.total_matches > 0) {
+      if (window.confirm('Foram encontradas ' + res.total_matches + ' partidas na nuvem para este e-mail! Deseja restaurar agora?')) {
+        restoreCommunityMatches();
+      }
+    }
+  }).catch(function(error) {
     updateCommunityStatus({ message: error.message });
   }).finally(function() {
     $('btn-community-backup').disabled = false;
+  });
+}
+
+function restoreCommunityMatches() {
+  var btn = $('btn-community-restore');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Restaurando partidas da nuvem...';
+  window.dbd.restoreCommunityMatches().then(function(result) {
+    if (result && result.count > 0) {
+      alert('Restauração concluída! ' + result.count + ' partidas foram recuperadas da nuvem.');
+      load();
+    } else {
+      alert('Nenhuma partida nova para restaurar da nuvem.');
+    }
+    refreshCloudBackupInfo();
+  }).catch(function(err) {
+    alert('Erro ao restaurar partidas: ' + err.message);
+  }).finally(function() {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Restaurar Partidas da Nuvem';
+  });
+}
+
+if ($('btn-community-restore')) {
+  $('btn-community-restore').onclick = restoreCommunityMatches;
+}
+if (window.dbd && window.dbd.onRestoreProgress) {
+  window.dbd.onRestoreProgress(function(info) {
+    if (info && info.phase === 'completed') {
+      load();
+      refreshCloudBackupInfo();
+    }
   });
 }
 window.dbd.onCommunityStatus(updateCommunityStatus);

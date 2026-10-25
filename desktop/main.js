@@ -11,7 +11,7 @@ if (existsSync(envPath)) {
   config(); // fallback padrão
 }
 import { app, BrowserWindow, globalShortcut, ipcMain, dialog, Tray, Menu, nativeImage, screen, shell } from "electron";
-import { openDatabase, allSavedMatches } from "./database.js";
+import { openDatabase, allSavedMatches, ingestMatches } from "./database.js";
 import { startServer } from "./server.js";
 import { createBackgroundCollector } from "./background-collector.js";
 import { createCommunityAuth, ensureAnonymousCommunitySession, linkRecoveryEmailDirect, uploadAllCommunityMatches } from "./community.js";
@@ -750,6 +750,40 @@ app.whenReady().then(() => {
     setTimeout(() => {
       wikiCatalog.refresh().catch(() => {});
     }, 800);
+    async function checkCloudBackup(targetDb) {
+      if (!userConfig.communityOptIn || !communityAuth) return;
+      try {
+        const session = await communityAuth.getSession();
+        if (!session?.token) return;
+        const summary = await communityAuth.getCloudBackupSummary();
+        if (summary && summary.total_matches > 0) {
+          const email = targetDb.userEmail ?? null;
+          let localCount = 0;
+          if (targetDb.type === "sqlite") {
+            localCount = email
+              ? targetDb.db.prepare("SELECT COUNT(*) as c FROM matches WHERE user_email = ?").get(email)?.c || 0
+              : targetDb.db.prepare("SELECT COUNT(*) as c FROM matches WHERE user_email IS NULL").get()?.c || 0;
+          }
+          if (summary.total_matches > localCount) {
+            console.log(`[Cloud] Nuvem possui ${summary.total_matches} partidas vs ${localCount} locais. Restaurando histórico automaticamente...`);
+            communityState.message = `Recuperando ${summary.total_matches} partidas da nuvem...`;
+            if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+            const { matches } = await communityAuth.restoreUserMatches();
+            if (matches.length > 0) {
+              await ingestMatches(targetDb, matches);
+              communityState.message = `Histórico restaurado da nuvem: ${matches.length} partidas sincronizadas.`;
+              if (window && !window.isDestroyed()) {
+                window.webContents.send("community-status", communityState);
+                window.webContents.send("restore-progress", { count: matches.length, phase: "completed" });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[Cloud] Verificação de backup da nuvem:", err.message);
+      }
+    }
+
     collector = createBackgroundCollector(db, state => {
       if (window && !window.isDestroyed()) {
         window.webContents.send("collector-status", state);
@@ -760,6 +794,7 @@ app.whenReady().then(() => {
     // Sincroniza todas as partidas salvas localmente com a nuvem ao iniciar
     setTimeout(() => {
       syncAllMatchesToCommunity(db).catch(() => {});
+      checkCloudBackup(db).catch(() => {});
     }, 1500);
     // Inicia o coletor 2s após a janela aparecer para não travar a UI
     setTimeout(() => collector.start(), 2000);
@@ -833,7 +868,7 @@ ipcMain.handle("set-community-opt-in", async (_, enabled) => {
 ipcMain.handle("link-community-email", async (_, email) => {
   if (!communityAuth) throw new Error("Community API is not configured");
   const requestedEmail = String(email || "").trim();
-  if (!requestedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(requestedEmail)) {
+  if (!requestedEmail || !/^[^s@]+@[^s@]+.[^s@]+$/.test(requestedEmail)) {
     throw new Error("Informe um e-mail válido.");
   }
   communityState.pendingEmail = requestedEmail;
@@ -848,15 +883,127 @@ ipcMain.handle("link-community-email", async (_, email) => {
     communityState.pendingEmail = null;
     userConfig.communityPendingEmail = null;
     saveUserConfig();
-    communityState.message = "E-mail vinculado para recuperação de conta.";
+    if (linked.recovered) {
+      communityState.message = `Conta existente recuperada! (${linked.total_matches || 0} partidas na nuvem).`;
+      if (appDb && linked.total_matches > 0) {
+        communityAuth.restoreUserMatches().then(async ({ matches }) => {
+          if (matches.length > 0) {
+            await ingestMatches(appDb, matches);
+            communityState.message = `Histórico recuperado da nuvem: ${matches.length} partidas sincronizadas.`;
+            if (window && !window.isDestroyed()) {
+              window.webContents.send("community-status", communityState);
+              window.webContents.send("restore-progress", { count: matches.length, phase: "completed" });
+            }
+          }
+        }).catch(() => {});
+      }
+    } else {
+      communityState.message = "E-mail vinculado para recuperação de conta.";
+    }
     if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
-    return communityState;
+    return { ...communityState, recovered: !!linked.recovered, total_matches: linked.total_matches || 0 };
   } catch (error) {
     communityState.pendingEmail = null;
     communityState.email = null;
     communityState.message = `Não foi possível vincular o e-mail: ${error.message}`;
     if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
     throw error;
+  }
+});
+
+ipcMain.handle("restore-community-matches", async () => {
+  if (!communityAuth) throw new Error("API da comunidade não configurada.");
+  communityState.syncing = true;
+  communityState.message = "Baixando partidas da nuvem...";
+  if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+  try {
+    const { matches, total } = await communityAuth.restoreUserMatches({
+      onProgress: ({ downloaded, total }) => {
+        communityState.message = `Baixando partidas da nuvem (${downloaded}/${total})...`;
+        if (window && !window.isDestroyed()) {
+          window.webContents.send("community-status", communityState);
+          window.webContents.send("restore-progress", { downloaded, total, phase: "downloading" });
+        }
+      }
+    });
+
+    if (matches.length > 0 && appDb) {
+      communityState.message = `Gravando ${matches.length} partidas no banco local...`;
+      if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+
+      const result = await ingestMatches(appDb, matches);
+      communityState.message = `Restauração concluída: ${result.inserted} adicionadas, ${result.updated} atualizadas de ${total} partidas.`;
+      if (window && !window.isDestroyed()) {
+        window.webContents.send("community-status", communityState);
+        window.webContents.send("restore-progress", { count: matches.length, phase: "completed" });
+      }
+      return { success: true, count: matches.length, total, inserted: result.inserted, updated: result.updated };
+    } else {
+      communityState.message = "Nenhuma partida encontrada na nuvem para esta conta.";
+      if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+      return { success: true, count: 0, total: 0 };
+    }
+  } catch (error) {
+    communityState.message = `Erro ao restaurar partidas: ${error.message}`;
+    if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+    throw error;
+  } finally {
+    communityState.syncing = false;
+    if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+  }
+});
+
+ipcMain.handle("get-cloud-backup-summary", async () => {
+  if (!communityAuth) return null;
+  try {
+    const summary = await communityAuth.getCloudBackupSummary();
+    let localMatchesCount = 0;
+    if (appDb && appDb.type === "sqlite") {
+      const email = appDb.userEmail ?? null;
+      localMatchesCount = email
+        ? appDb.db.prepare("SELECT COUNT(*) as c FROM matches WHERE user_email = ?").get(email)?.c || 0
+        : appDb.db.prepare("SELECT COUNT(*) as c FROM matches WHERE user_email IS NULL").get()?.c || 0;
+    }
+    return {
+      ...(summary || {}),
+      local_matches: localMatchesCount
+    };
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle("recover-community-account", async (_, email) => {
+  if (!communityAuth) throw new Error("API da comunidade não configurada.");
+  const requestedEmail = String(email || "").trim();
+  if (!requestedEmail || !/^[^s@]+@[^s@]+.[^s@]+$/.test(requestedEmail)) {
+    throw new Error("Informe um e-mail válido.");
+  }
+  communityState.message = `Recuperando conta associada a ${requestedEmail}...`;
+  if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+  try {
+    const result = await communityAuth.recoverAccount(requestedEmail);
+    communityState.email = requestedEmail;
+    communityState.emailConfirmed = true;
+    communityState.message = `Conta recuperada com sucesso! ${result.total_matches || 0} partidas na nuvem.`;
+    if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+    if (appDb && result.total_matches > 0) {
+      communityAuth.restoreUserMatches().then(async ({ matches }) => {
+        if (matches.length > 0) {
+          await ingestMatches(appDb, matches);
+          communityState.message = `Histórico recuperado da nuvem: ${matches.length} partidas sincronizadas.`;
+          if (window && !window.isDestroyed()) {
+            window.webContents.send("community-status", communityState);
+            window.webContents.send("restore-progress", { count: matches.length, phase: "completed" });
+          }
+        }
+      }).catch(() => {});
+    }
+    return { ...result, communityState };
+  } catch (err) {
+    communityState.message = `Falha na recuperação: ${err.message}`;
+    if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
+    throw err;
   }
 });
 ipcMain.handle("show-map-preview", () => {
