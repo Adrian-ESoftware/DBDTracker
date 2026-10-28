@@ -380,3 +380,75 @@ test("CommunityClient.linkEmail atualiza token e sessão ao recuperar conta exis
   assert.equal(updatedSession.user_id, "original_user_789");
   assert.equal(updatedSession.email, "antigo@exemplo.com");
 });
+
+
+test("fetchCommunityStats utiliza cache local e não reexecuta requisição dentro do TTL", async () => {
+  let callCount = 0;
+  const mockFetch = async () => {
+    callCount++;
+    return {
+      ok: true,
+      json: async () => ({
+        total_matches: 42,
+        characters: { survivor: [], killer: [] },
+        maps: [],
+        killers: [],
+        perks: { survivor: [], killer: [] }
+      })
+    };
+  };
+
+  const res1 = await fetchCommunityStats({
+    apiUrl: "https://dbd-community.example.workers.dev",
+    fetchImpl: mockFetch,
+    force: true
+  });
+  assert.equal(res1.total_matches, 42);
+  assert.equal(callCount, 1);
+
+  // Segunda chamada sem force deve vir do cache (0 requisições adicionais)
+  const res2 = await fetchCommunityStats({
+    apiUrl: "https://dbd-community.example.workers.dev",
+    fetchImpl: mockFetch,
+    force: false
+  });
+  assert.equal(res2.total_matches, 42);
+  assert.equal(callCount, 1);
+});
+
+test("uploadAllCommunityMatches interrompe imediatamente sem recursão em caso de cota excedida (429)", async () => {
+  let requestsMade = 0;
+  const mockFetch = async () => {
+    requestsMade++;
+    return {
+      ok: false,
+      status: 429,
+      json: async () => ({ error: "quota_exceeded", message: "rate limit exceeded" })
+    };
+  };
+
+  const matches = Array.from({ length: 50 }, (_, i) => ({
+    source_id: `match-${i}`,
+    played_at: new Date().toISOString(),
+    role: "survivor",
+    character: "Dwight",
+    map: "Autohaven"
+  }));
+
+  await assert.rejects(
+    () => uploadAllCommunityMatches({
+      apiUrl: "https://dbd-community.example.workers.dev",
+      accessToken: "dbd_token_quota_test",
+      matches,
+      fetchImpl: mockFetch
+    }),
+    err => {
+      assert.equal(err.isQuota, true);
+      assert.equal(err.status, 429);
+      return true;
+    }
+  );
+
+  // Deve ter feito exatamente 1 requisição, sem se dividir recursivamente
+  assert.equal(requestsMade, 1);
+});

@@ -48,6 +48,8 @@ const cleanParticipants = (value: unknown) =>
       }))
     : [];
 
+const authCache = new Map<string, { account: { id: string; email: string | null }; expiresAt: number }>();
+
 async function authenticate(
   request: Request,
   env: Env
@@ -58,16 +60,36 @@ async function authenticate(
   if (!token) return null;
 
   const tokenHash = await sha256Hex(token);
+  const now = Date.now();
+  const cached = authCache.get(tokenHash);
+  if (cached && cached.expiresAt > now) {
+    return cached.account;
+  }
+
   const account = await env.DB.prepare(
     "SELECT id, email FROM community_accounts WHERE token_hash = ?"
   )
     .bind(tokenHash)
     .first<{ id: string; email: string | null }>();
 
+  if (account) {
+    authCache.set(tokenHash, { account, expiresAt: now + 5 * 60 * 1000 });
+  }
+
   return account ?? null;
 }
 
-export async function refreshStats(db: D1Database): Promise<void> {
+let lastStatsRefreshTime = 0;
+const STATS_REFRESH_MIN_INTERVAL_MS = 25 * 60 * 1000; // 25 min cooldown
+let cachedStatsResponse: { data: any; timestamp: number } | null = null;
+const STATS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 min cache em memória no Worker
+
+export async function refreshStats(db: D1Database, force = false): Promise<void> {
+  const now = Date.now();
+  if (!force && (now - lastStatsRefreshTime < STATS_REFRESH_MIN_INTERVAL_MS)) {
+    return;
+  }
+  lastStatsRefreshTime = now;
   const uniqueMatchesCte = `
     WITH unique_matches AS (
       SELECT *
@@ -245,6 +267,7 @@ export async function refreshStats(db: D1Database): Promise<void> {
   ];
 
   await db.batch(statements);
+  cachedStatsResponse = null;
 }
 
 export default {
@@ -670,11 +693,25 @@ export default {
 
       // Executa em lotes seguros para o D1
       const CHUNK_SIZE = 50;
-      for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
-        await env.DB.batch(statements.slice(i, i + CHUNK_SIZE));
+      try {
+        for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
+          await env.DB.batch(statements.slice(i, i + CHUNK_SIZE));
+        }
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        if (/quota|limit|rate|exceeded|d1_error/i.test(errMsg)) {
+          console.error("[Community] Limite D1 atingido na ingestão:", errMsg);
+          return json({
+            error: "quota_exceeded",
+            message: "Limite diário de operações do banco Cloudflare D1 atingido. Suas partidas não foram perdidas; tente novamente mais tarde."
+          }, 429, { "Retry-After": "3600" });
+        }
+        throw err;
       }
 
-      ctx.waitUntil(refreshStats(env.DB));
+      // IMPORTANTE: Não invocar refreshStats por chunk!
+      // O recálculo global de estatísticas é executado exclusivamente pelo Cron Trigger a cada 30min
+      // ou manualmente pelo endpoint administrativo, poupando milhões de leituras desnecessárias no D1.
 
       return json({ accepted: clean.length });
     }
@@ -831,6 +868,24 @@ export default {
 
     // ── 7. Estatísticas Agregadas para o Overlay UI ──
     if (request.method === "GET" && pathname === "/api/community-stats") {
+      const now = Date.now();
+
+      // 1. Cache em memória no Worker isolate (Zero chamadas ao D1)
+      if (cachedStatsResponse && now - cachedStatsResponse.timestamp < STATS_CACHE_TTL_MS) {
+        return json(cachedStatsResponse.data, 200, {
+          "Cache-Control": "public, max-age=300, s-maxage=900, stale-while-revalidate=1800",
+          "X-Cache": "HIT-MEMORY"
+        });
+      }
+
+      // 2. Cache Edge da Cloudflare (Zero leituras no D1)
+      const cache = caches.default;
+      const cacheKey = new Request(url.toString(), { method: "GET" });
+      const cachedEdge = await cache.match(cacheKey);
+      if (cachedEdge) {
+        return cachedEdge;
+      }
+
       const fetchStatTables = () =>
         Promise.all([
           env.DB.prepare("SELECT role, character_id, match_count, escapes, kills, average_score FROM public_character_stats").all<{
@@ -858,30 +913,57 @@ export default {
           }>()
         ]);
 
-      let [charactersRes, mapsRes, killersRes, perksRes] = await fetchStatTables();
+      let characterRows: any[] = [];
+      let mapRows: any[] = [];
+      let perkRows: any[] = [];
+      let killerRows: any[] = [];
 
-      let characterRows = charactersRes.results || [];
-      let mapRows = mapsRes.results || [];
-      let perkRows = perksRes.results || [];
-      let killerRows = killersRes.results || [];
+      try {
+        let [charactersRes, mapsRes, killersRes, perksRes] = await fetchStatTables();
+        characterRows = charactersRes.results || [];
+        mapRows = mapsRes.results || [];
+        perkRows = perksRes.results || [];
+        killerRows = killersRes.results || [];
 
-      // Se todas as tabelas estiverem vazias, executa refresh síncrono para preencher de imediato
-      if (
-        characterRows.length === 0 &&
-        mapRows.length === 0 &&
-        killerRows.length === 0 &&
-        perkRows.length === 0
-      ) {
-        try {
-          await refreshStats(env.DB);
-          [charactersRes, mapsRes, killersRes, perksRes] = await fetchStatTables();
-          characterRows = charactersRes.results || [];
-          mapRows = mapsRes.results || [];
-          perkRows = perksRes.results || [];
-          killerRows = killersRes.results || [];
-        } catch (err) {
-          console.error("Falha ao inicializar estatísticas:", err);
+        // Se todas as tabelas estiverem vazias, executa refresh síncrono para preencher de imediato (respeitando cooldown)
+        if (
+          characterRows.length === 0 &&
+          mapRows.length === 0 &&
+          killerRows.length === 0 &&
+          perkRows.length === 0
+        ) {
+          try {
+            await refreshStats(env.DB);
+            [charactersRes, mapsRes, killersRes, perksRes] = await fetchStatTables();
+            characterRows = charactersRes.results || [];
+            mapRows = mapsRes.results || [];
+            perkRows = perksRes.results || [];
+            killerRows = killersRes.results || [];
+          } catch (err) {
+            console.error("Falha ao inicializar estatísticas:", err);
+          }
         }
+      } catch (d1Err: any) {
+        console.warn("[Community] Erro ao consultar D1 em community-stats:", d1Err?.message || d1Err);
+        // Se o D1 estiver com cota esgotada ou instável, usa o último cache disponível
+        if (cachedStatsResponse) {
+          return json(cachedStatsResponse.data, 200, {
+            "Cache-Control": "public, max-age=60",
+            "X-Cache": "STALE-FALLBACK"
+          });
+        }
+        // Retorna fallback limpo com HTTP 200 para não travar a interface
+        return json({
+          total_matches: 0,
+          characters: { survivor: [], killer: [] },
+          maps: [],
+          killers: [],
+          perks: { survivor: [], killer: [] },
+          warning: "temporarily_unavailable"
+        }, 200, {
+          "Cache-Control": "public, max-age=60",
+          "X-Cache": "ERROR-FALLBACK"
+        });
       }
 
       const aggregate = (
@@ -949,10 +1031,13 @@ export default {
         }
       };
 
-      const hasData = characterRows.length > 0 || mapRows.length > 0 || killerRows.length > 0 || perkRows.length > 0;
-      return json(responseData, 200, {
-        "Cache-Control": hasData ? "public, max-age=60, s-maxage=300" : "no-cache"
+      cachedStatsResponse = { data: responseData, timestamp: Date.now() };
+      const response = json(responseData, 200, {
+        "Cache-Control": "public, max-age=300, s-maxage=900, stale-while-revalidate=1800",
+        "X-Cache": "MISS"
       });
+      ctx.waitUntil(cache.put(cacheKey, response.clone()));
+      return response;
     }
 
     // ── 5. Endpoint de Administração para Atualização Manual de Estatísticas ──
@@ -962,7 +1047,7 @@ export default {
         return json({ error: "unauthorized" }, 401);
       }
       try {
-        await refreshStats(env.DB);
+        await refreshStats(env.DB, true);
         return json({ refreshed: true });
       } catch (err: any) {
         return json({ error: err?.message || String(err), stack: err?.stack }, 500);
@@ -974,6 +1059,6 @@ export default {
 
   // ── Gatilho Periódico (Cron Trigger) ──
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(refreshStats(env.DB));
+    ctx.waitUntil(refreshStats(env.DB, true));
   }
 };

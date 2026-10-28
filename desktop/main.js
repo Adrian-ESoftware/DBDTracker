@@ -651,30 +651,59 @@ function positionOverlayWindow() {
 async function syncAllMatchesToCommunity(db, extraMatches = []) {
   if (!userConfig.communityOptIn || !communityAuth || communityState.syncing) return communityState;
   try {
-    const saved = db ? await allSavedMatches(db) : [];
-    const combined = [...saved, ...(Array.isArray(extraMatches) ? extraMatches : [])];
-    if (combined.length === 0) return communityState;
+    let matchesToSync = [];
+    const hasExtra = Array.isArray(extraMatches) && extraMatches.length > 0;
+
+    let localCount = 0;
+    if (db && db.type === "sqlite") {
+      const email = db.userEmail ?? null;
+      localCount = email
+        ? db.db.prepare("SELECT COUNT(*) as c FROM matches WHERE user_email = ? OR user_email IS NULL").get(email)?.c || 0
+        : db.db.prepare("SELECT COUNT(*) as c FROM matches").get()?.c || 0;
+    }
+
+    if (hasExtra) {
+      matchesToSync = extraMatches;
+    } else if (db) {
+      // Se não há novas partidas desde a última sincronização bem-sucedida, não reenvia nada
+      if (localCount > 0 && userConfig.lastSyncedMatchCount === localCount) {
+        return communityState;
+      }
+      matchesToSync = await allSavedMatches(db);
+    }
+
+    if (!matchesToSync || matchesToSync.length === 0) return communityState;
 
     communityState.syncing = true;
-    communityState.message = `Sincronizando ${combined.length} partida(s) salva(s)...`;
+    communityState.message = `Sincronizando ${matchesToSync.length} partida(s)...`;
     if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
 
     const session = await ensureAnonymousCommunitySession(communityAuth);
     const result = await uploadAllCommunityMatches({
       apiUrl: communityConfig.apiUrl,
       accessToken: session.access_token,
-      matches: combined,
+      matches: matchesToSync,
       storage: communityStorage,
       onProgress: ({ uploaded, skipped, total }) => {
         communityState.message = `Sincronizando partidas (${uploaded + skipped}/${total})...`;
         if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
       }
     });
+
+    if (localCount > 0) {
+      userConfig.lastSyncedMatchCount = localCount;
+      saveUserConfig();
+    }
+
     communityState.message = `${result.total} partida(s) sincronizada(s) na comunidade.`;
   } catch (error) {
-    communityState.message = error.message.startsWith("Falha na sincronização")
-      ? error.message
-      : `Falha na sincronização: ${error.message}`;
+    if (error?.isQuota || /quota|limit|exceeded|rate|cota|429/i.test(error?.message || "")) {
+      communityState.message = "Limite diário da nuvem atingido. Partidas continuam seguras no seu PC.";
+    } else {
+      communityState.message = error.message.startsWith("Falha na sincronização")
+        ? error.message
+        : `Falha na sincronização: ${error.message}`;
+    }
   } finally {
     communityState.syncing = false;
     if (window && !window.isDestroyed()) window.webContents.send("community-status", communityState);
@@ -852,8 +881,28 @@ ipcMain.handle("community-status", async () => {
   return communityState;
 });
 ipcMain.handle("community-stats", async () => {
-  if (!communityAuth) throw new Error("Community API is not configured");
-  return await communityAuth.fetchStats();
+  if (!communityAuth) {
+    return {
+      total_matches: 0,
+      characters: { survivor: [], killer: [] },
+      maps: [],
+      killers: [],
+      perks: { survivor: [], killer: [] }
+    };
+  }
+  try {
+    return await communityAuth.fetchStats();
+  } catch (err) {
+    console.warn("[Main] Erro ao buscar community-stats:", err.message);
+    return {
+      total_matches: 0,
+      characters: { survivor: [], killer: [] },
+      maps: [],
+      killers: [],
+      perks: { survivor: [], killer: [] },
+      warning: "temporarily_unavailable"
+    };
+  }
 });
 ipcMain.handle("set-community-opt-in", async (_, enabled) => {
   if (enabled) {

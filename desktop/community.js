@@ -250,9 +250,9 @@ export class CommunityClient {
     return { matches: allMatches, total };
   }
 
-  async fetchStats() {
+  async fetchStats({ force = false } = {}) {
     if (!this.baseUrl) throw new Error("Community API is not configured");
-    return fetchCommunityStats({ apiUrl: this.baseUrl, fetchImpl: this.fetch });
+    return fetchCommunityStats({ apiUrl: this.baseUrl, fetchImpl: this.fetch, force });
   }
 
   async uploadMatches(matches, metadata = {}) {
@@ -488,10 +488,19 @@ export async function uploadAllCommunityMatches({
         onProgress({ uploaded, skipped, total: validMatches.length });
       }
     } catch (error) {
-      // Se um lote falhar com HTTP 500 por conter partidas já existentes no D1,
-      // divide recursivamente ao meio para enviar todas as partidas inéditas e marcar as existentes.
-      const isConflictError = error?.status === 500 || /\(500\)/.test(error?.message || "");
-      if (isConflictError) {
+      // Se a cota diária ou rate limit foi atingido, aborta imediatamente sem reenviar requisições em cascata
+      const isQuotaError = error?.status === 429 || /quota|limit|exceeded|rate|cota|too many requests/i.test(error?.message || "");
+      if (isQuotaError) {
+        const quotaErr = new Error("Limite diário da nuvem atingido temporariamente. Suas partidas continuam salvas localmente.");
+        quotaErr.isQuota = true;
+        quotaErr.status = 429;
+        throw quotaErr;
+      }
+
+      // Se um lote falhar por erro de constraint de chave estrangeira com partida específica,
+      // divide recursivamente para enviar as partidas válidas e descartar a conflitante.
+      const isConstraintError = /FOREIGN KEY|constraint failed|UNIQUE constraint/i.test(error?.message || "");
+      if (isConstraintError) {
         if (chunk.length === 1) {
           syncedSet.add(getCommunityMatchKey(chunk[0]));
           saveSynced();
@@ -523,25 +532,61 @@ export async function uploadAllCommunityMatches({
   };
 }
 
-export async function fetchCommunityStats({ apiUrl, fetchImpl = fetch }) {
+let localStatsCache = null;
+let localStatsCacheExpiry = 0;
+const CLIENT_STATS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos de cache local
+
+export async function fetchCommunityStats({ apiUrl, fetchImpl = fetch, force = false } = {}) {
   if (!apiUrl) throw new Error("community API is required");
+
+  const now = Date.now();
+  if (!force && localStatsCache && now < localStatsCacheExpiry) {
+    return localStatsCache;
+  }
+
   const base = resolveBaseUrl(apiUrl);
   const endpoint = `${base}/api/community-stats`;
 
-  const response = await fetchImpl(endpoint, {
-    method: "GET",
-    headers: { "Content-Type": "application/json" }
-  });
-
-  let body = {};
   try {
-    body = await response.json();
-  } catch {}
+    const response = await fetchImpl(endpoint, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" }
+    });
 
-  if (!response.ok) {
-    throw new Error(`Falha ao obter estatísticas da comunidade: ${body.error || response.status}`);
+    let body = {};
+    try {
+      body = await response.json();
+    } catch {}
+
+    if (!response.ok) {
+      if (response.status === 429 || response.status === 500) {
+        if (localStatsCache) return localStatsCache;
+        return {
+          total_matches: 0,
+          characters: { survivor: [], killer: [] },
+          maps: [],
+          killers: [],
+          perks: { survivor: [], killer: [] },
+          warning: "temporarily_unavailable"
+        };
+      }
+      throw new Error(`Falha ao obter estatísticas da comunidade: ${body.error || response.status}`);
+    }
+
+    localStatsCache = body;
+    localStatsCacheExpiry = now + CLIENT_STATS_CACHE_TTL_MS;
+    return body;
+  } catch (err) {
+    if (localStatsCache) return localStatsCache;
+    return {
+      total_matches: 0,
+      characters: { survivor: [], killer: [] },
+      maps: [],
+      killers: [],
+      perks: { survivor: [], killer: [] },
+      warning: "temporarily_unavailable"
+    };
   }
-  return body;
 }
 
 

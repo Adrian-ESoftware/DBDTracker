@@ -1841,34 +1841,46 @@ async function load() {
 
       if ($('community-summary')) {
         var summaryEl = $('community-summary');
-        summaryEl.className = 'comm-highlights-grid';
-        summaryEl.style.display = 'grid';
-        summaryEl.innerHTML =
-          '<div class="comm-hero-card">' +
-            '<div class="comm-hero-blank" style="border-color:var(--red);color:var(--red);font-size:18px;">★</div>' +
-            '<div class="comm-hero-body">' +
-              '<div class="comm-hero-label">Partidas na Comunidade</div>' +
-              '<div style="font-size:22px;font-weight:900;color:#fff;line-height:1.1;">' + fmt(commTotalMatches) + ' <span style="font-size:11px;font-weight:600;color:var(--muted);">partidas</span></div>' +
-              '<div class="comm-hero-meta">' +
-                '<span class="bar-badge">' + fmt(survRecordsTotal) + ' survs</span>' +
-                '<span class="bar-badge">' + fmt(killerTotal) + ' killers</span>' +
+        if (community.warning === "temporarily_unavailable" || (!commTotalMatches && !community.total_matches)) {
+          summaryEl.className = 'comm-highlights-grid';
+          summaryEl.style.display = 'block';
+          summaryEl.innerHTML =
+            '<div class="comm-hero-card" style="padding:12px; grid-column:1/-1;">' +
+              '<div style="font-weight:700; font-size:12px; color:#fff; margin-bottom:4px;">Estatísticas da Comunidade</div>' +
+              '<div style="font-size:10px; color:var(--muted); line-height:1.4;">' +
+                'A nuvem está em manutenção ou o limite diário foi atingido. Suas estatísticas locais continuam 100% ativas na aba Pessoal.' +
+              '</div>' +
+            '</div>';
+        } else {
+          summaryEl.className = 'comm-highlights-grid';
+          summaryEl.style.display = 'grid';
+          summaryEl.innerHTML =
+            '<div class="comm-hero-card">' +
+              '<div class="comm-hero-blank" style="border-color:var(--red);color:var(--red);font-size:18px;">★</div>' +
+              '<div class="comm-hero-body">' +
+                '<div class="comm-hero-label">Partidas na Comunidade</div>' +
+                '<div style="font-size:22px;font-weight:900;color:#fff;line-height:1.1;">' + fmt(commTotalMatches) + ' <span style="font-size:11px;font-weight:600;color:var(--muted);">partidas</span></div>' +
+                '<div class="comm-hero-meta">' +
+                  '<span class="bar-badge">' + fmt(survRecordsTotal) + ' survs</span>' +
+                  '<span class="bar-badge">' + fmt(killerTotal) + ' killers</span>' +
+                '</div>' +
               '</div>' +
             '</div>' +
-          '</div>' +
-          (topSurvItem
-            ? buildHeroCard('Top Survivor', topSurvItem.character, topSurvItem.image, topSurvItem.count, topSurvItem.pct, topSurvItem.winrate != null ? topSurvItem.winrate + '% Fuga' : '', 'character', topSurvItem.character)
-            : '') +
-          (topKillerItem
-            ? buildHeroCard('Top Killer', topKillerName, topKillerItem.image, topKillerItem.count, topKillerItem.pct, (topKillerItem.winrate != null ? topKillerItem.winrate + '% WR' : '') + (topKillerItem.average_kills != null ? ' • ' + topKillerItem.average_kills + 'K' : ''), 'killer', topKillerName)
-            : '') +
-          (topMapItem
-            ? buildHeroCard('Top Mapa', topMapItem.map, topMapItem.image, topMapItem.count, topMapItem.pct, topMapItem.winrate != null ? topMapItem.winrate + '% WR' : '', 'map', topMapItem.map)
-            : '');
-        summaryEl.querySelectorAll('.comm-hero-card.clickable').forEach(function(cardEl) {
-          cardEl.onclick = function() {
-            inspectItem(cardEl.getAttribute('data-comm-key'), cardEl.getAttribute('data-comm-val'));
-          };
-        });
+            (topSurvItem
+              ? buildHeroCard('Top Survivor', topSurvItem.character, topSurvItem.image, topSurvItem.count, topSurvItem.pct, topSurvItem.winrate != null ? topSurvItem.winrate + '% Fuga' : '', 'character', topSurvItem.character)
+              : '') +
+            (topKillerItem
+              ? buildHeroCard('Top Killer', topKillerName, topKillerItem.image, topKillerItem.count, topKillerItem.pct, (topKillerItem.winrate != null ? topKillerItem.winrate + '% WR' : '') + (topKillerItem.average_kills != null ? ' • ' + topKillerItem.average_kills + 'K' : ''), 'killer', topKillerName)
+              : '') +
+            (topMapItem
+              ? buildHeroCard('Top Mapa', topMapItem.map, topMapItem.image, topMapItem.count, topMapItem.pct, topMapItem.winrate != null ? topMapItem.winrate + '% WR' : '', 'map', topMapItem.map)
+              : '');
+          summaryEl.querySelectorAll('.comm-hero-card.clickable').forEach(function(cardEl) {
+            cardEl.onclick = function() {
+              inspectItem(cardEl.getAttribute('data-comm-key'), cardEl.getAttribute('data-comm-val'));
+            };
+          });
+        }
       }
     } else {
       $('characters-ranking-title').textContent = 'Personagens Mais Jogados (' + (statsPeriod === '30-days' ? '30 Dias' : 'Oficial') + ')';
