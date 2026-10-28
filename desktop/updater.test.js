@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   compareVersions,
-   selectReleaseAsset,
+  selectReleaseAsset,
   buildWindowsUpdateScript,
+  buildWindowsVbsScript,
   resolveTargetExecutablePath,
   createAutoUpdater
 } from "./updater.js";
@@ -115,11 +116,17 @@ test("createAutoUpdater baixa nova versão do GitHub Releases e gera script de s
   assert.equal(installResult.installed, true);
   assert.equal(quitCalled, true);
   assert.equal(spawned.length, 1);
-  assert.equal(spawned[0].cmd, "cmd.exe");
+  assert.equal(spawned[0].cmd, "wscript.exe");
 
   const scriptPath = join(tempUserData, "updates", "apply-update.cmd");
   assert.ok(existsSync(scriptPath));
   const scriptContent = readFileSync(scriptPath, "utf8");
   assert.ok(scriptContent.includes("C:\\Users\\Player\\Desktop\\DBD-Tracker-Overlay.exe"));
   assert.ok(scriptContent.includes("copy /B /Y"));
+
+  const vbsPath = join(tempUserData, "updates", "apply-update.vbs");
+  assert.ok(existsSync(vbsPath));
+  const vbsContent = readFileSync(vbsPath, "utf8");
+  assert.ok(vbsContent.includes("C:\\Users\\Player\\Desktop\\DBD-Tracker-Overlay.exe"));
+  assert.ok(vbsContent.includes("WScript.Sleep"));
 });

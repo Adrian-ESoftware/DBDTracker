@@ -60,18 +60,54 @@ export function buildWindowsUpdateScript(sourceExePath, targetExePath, relaunch 
     "chcp 65001 >nul",
     `set "SRC=${sourceExePath}"`,
     `set "DST=${targetExePath}"`,
-    "for /L %%i in (1,1,40) do (",
-    "  timeout /t 1 /nobreak >nul",
+    "ping 127.0.0.1 -n 2 >nul",
+    "for /L %%i in (1,1,45) do (",
     '  copy /B /Y "%SRC%" "%DST%" >nul 2>&1',
     "  if not errorlevel 1 (",
     '    del /F /Q "%SRC%" >nul 2>&1',
     relaunchLine + '    del /F /Q "%~f0" >nul 2>&1',
     "    exit /b 0",
     "  )",
+    "  ping 127.0.0.1 -n 2 >nul",
     ")",
     "exit /b 1",
     ""
   ].join("\r\n");
+}
+
+export function buildWindowsVbsScript(sourceExePath, targetExePath, relaunch = true) {
+  const escapedSrc = sourceExePath.replace(/"/g, '""');
+  const escapedDst = targetExePath.replace(/"/g, '""');
+  const relaunchCode = relaunch ? `sh.Run Chr(34) & "${escapedDst}" & Chr(34), 1, False` : "";
+  return [
+    'Set fso = CreateObject("Scripting.FileSystemObject")',
+    'Set sh = CreateObject("WScript.Shell")',
+    `src = "${escapedSrc}"`,
+    `dst = "${escapedDst}"`,
+    "WScript.Sleep 1500",
+    "success = False",
+    "For i = 1 To 45",
+    "  On Error Resume Next",
+    "  Err.Clear",
+    "  fso.CopyFile src, dst, True",
+    "  If Err.Number = 0 Then",
+    "    success = True",
+    "    On Error GoTo 0",
+    "    Exit For",
+    "  End If",
+    "  On Error GoTo 0",
+    "  WScript.Sleep 1000",
+    "Next",
+    "If success Then",
+    "  On Error Resume Next",
+    "  fso.DeleteFile src, True",
+    relaunchCode ? `  ${relaunchCode}` : "",
+    "  fso.DeleteFile WScript.ScriptFullName, True",
+    "  WScript.Quit 0",
+    "End If",
+    "WScript.Quit 1",
+    ""
+  ].filter(line => line !== "").join("\r\n");
 }
 
 export function buildLinuxUpdateScript(sourceAppImagePath, targetAppImagePath, relaunch = true) {
@@ -358,15 +394,28 @@ export function createAutoUpdater({
     mkdirSync(updatesDir, { recursive: true });
 
     if (platform === "win32") {
-      const scriptPath = join(updatesDir, "apply-update.cmd");
-      const scriptContent = buildWindowsUpdateScript(state.downloadedFilePath, targetExePath, relaunch);
-      writeFileSync(scriptPath, scriptContent, "utf8");
-      const child = spawnImpl("cmd.exe", ["/d", "/s", "/c", `"${scriptPath}"`], {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-        windowsVerbatimArguments: true
-      });
+      const vbsPath = join(updatesDir, "apply-update.vbs");
+      const cmdPath = join(updatesDir, "apply-update.cmd");
+      const vbsContent = buildWindowsVbsScript(state.downloadedFilePath, targetExePath, relaunch);
+      const cmdContent = buildWindowsUpdateScript(state.downloadedFilePath, targetExePath, relaunch);
+      writeFileSync(vbsPath, vbsContent, "utf8");
+      writeFileSync(cmdPath, cmdContent, "utf8");
+
+      let child;
+      try {
+        child = spawnImpl("wscript.exe", ["//B", "//Nologo", vbsPath], {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true
+        });
+      } catch {
+        child = spawnImpl("cmd.exe", ["/d", "/s", "/c", `"${cmdPath}"`], {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+          windowsVerbatimArguments: true
+        });
+      }
       child.unref?.();
       updateApplied = true;
       return true;

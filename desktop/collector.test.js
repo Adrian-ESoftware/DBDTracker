@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractAuthToken, findMatches, normalizeOfficialMatch, formatStatus } from "./background-collector.js";
+import { extractAuthToken, findMatches, normalizeOfficialMatch, formatStatus, createBackgroundCollector } from "./background-collector.js";
 
 test("extractAuthToken extrai token de objeto auth-store e valida expiração", () => {
   const validStore = {
@@ -317,5 +317,37 @@ test("ingestão de payload completo da API BHVR player-stats Regular (characters
   const charSurv = allChars.find(c => c.character === "Nea Karlsson");
   assert.equal(charSurv.count, 30);
   assert.equal(charSurv.winrate, 53);
+});
+
+test("createBackgroundCollector permite configurar intervalo e executa checagens rápidas otimizadas", async () => {
+  const { openDatabase } = await import("./database.js");
+  const db = openDatabase(":memory:");
+
+  const urlsFetched = [];
+  const mockFetch = async (url) => {
+    urlsFetched.push(String(url));
+    if (String(url).includes("/players/me")) {
+      return { ok: true, status: 200, async json() { return { email: "player@example.com" }; } };
+    }
+    if (String(url).includes("/match-history")) {
+      return { ok: true, status: 200, async json() { return []; } };
+    }
+    if (String(url).includes("/player-stats/games/dbd")) {
+      return { ok: true, status: 200, async json() { return { data: {} }; } };
+    }
+    return { ok: true, status: 200, async json() { return {}; } };
+  };
+
+  const collector = createBackgroundCollector(db, {
+    fetchImpl: mockFetch
+  });
+
+  // Validação de intervalo de coleta
+  assert.equal(collector.setIntervalSec(10), 10000);
+  assert.equal(collector.setIntervalSec(2), 5000); // Mínimo 5s
+  assert.equal(collector.setIntervalSec(999), 300000); // Máximo 300s
+  assert.equal(collector.setIntervalSec(15), 15000);
+
+  collector.stop();
 });
 

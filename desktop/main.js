@@ -834,9 +834,13 @@ ipcMain.handle("toggle-clicks", () => {
 });
 ipcMain.handle("show-login", () => collector?.showLogin());
 ipcMain.handle("finish-login", () => collector?.finishLogin());
-ipcMain.handle("collect-now", () => collector?.collect());
+ipcMain.handle("collect-now", () => collector?.collect({ manual: true, full: true }));
 ipcMain.handle("clear-login", () => collector?.clearLogin());
-ipcMain.handle("collector-status", () => collector ? collector.getState() : { message: "Iniciando coletor...", loggedIn: false, collecting: false });
+ipcMain.handle("collector-status", () => {
+  if (!collector) return { message: "Iniciando coletor...", loggedIn: false, collecting: false, userEmail: db?.userEmail || null };
+  const s = collector.getState();
+  return { ...s, userEmail: db?.userEmail || null };
+});
 ipcMain.handle("community-status", async () => {
   loadUserConfig();
   communityState.officialEmail = userConfig.userEmail || null;
@@ -1070,6 +1074,11 @@ ipcMain.handle("save-overlay-settings", (_, settings) => {
   // Atualiza Inicialização com Sistema
   if (settings.startWithSystem !== undefined && settings.startWithSystem !== oldStartWithSystem) {
     applyStartWithSystem(userConfig.startWithSystem, userConfig.startMinimized);
+  }
+
+  // Atualiza intervalo de coleta rápida
+  if (settings.collectorIntervalSec !== undefined && collector?.setIntervalSec) {
+    collector.setIntervalSec(userConfig.collectorIntervalSec);
   }
 
   if (mapOverlayWindow && !mapOverlayWindow.isDestroyed()) {

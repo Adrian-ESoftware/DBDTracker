@@ -10,7 +10,7 @@ import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { ingestMatches, ingestOfficialSections, ingestSnapshots, getBackfillSnapshots } from "./database.js";
 
 const DEFAULT_PROVIDER = "steam";
-const INTERVAL_MS = 60_000;
+const INTERVAL_MS = 15_000;
 
 function getConfigPath() {
   try {
@@ -484,7 +484,22 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
     }
   }
 
-  async function collect() {
+  let lastFullSyncAt = 0;
+  let pollIntervalMs = INTERVAL_MS;
+
+  function setIntervalSec(sec) {
+    const s = Math.max(5, Math.min(300, Number(sec) || 15));
+    pollIntervalMs = s * 1000;
+    saveConfig({ collectorIntervalSec: s });
+    if (timer) {
+      clearInterval(timer);
+      timer = setInterval(() => collect(), pollIntervalMs);
+      timer.unref?.();
+    }
+    return pollIntervalMs;
+  }
+
+  async function collect(options = {}) {
     if (collecting) return state;
     if (browser && !browser.isDestroyed() && browser.isVisible()) {
       console.log("[Collector] Coleta suspensa enquanto a janela de login está aberta.");
@@ -504,76 +519,113 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
     }
 
     collecting = true;
-    status("Atualizando dados via API em segundo plano...");
+    const isManualOrFull = Boolean(options.full || options.manual);
+    const now = Date.now();
+    const needsFullSync = isManualOrFull || (now - lastFullSyncAt > 3 * 60_000);
+
+    if (isManualOrFull) {
+      status("Atualizando dados via API em segundo plano...");
+    }
 
     try {
       const cfg = loadConfig();
       const provider = cfg.provider || DEFAULT_PROVIDER;
 
-      // 1. Perfil / E-mail
-      try {
-        const meRes = await fetchApi("https://account-backend.bhvr.com/players/me", token);
-        if (meRes.status === 401) {
-          throw new Error("UNAUTHORIZED");
-        }
-        if (meRes.ok) {
-          const profile = await meRes.json();
-          if (profile?.email && db.userEmail !== profile.email) {
-            db.userEmail = profile.email;
-            saveConfig({ userEmail: profile.email });
-            console.log(`[Collector] E-mail obtido via API: ${profile.email}`);
+      // 1. Perfil / E-mail (busca se não tiver e-mail cadastrado ou em sync completo)
+      if (!db.userEmail || needsFullSync) {
+        try {
+          const meRes = await fetchApi("https://account-backend.bhvr.com/players/me", token);
+          if (meRes.status === 401) {
+            throw new Error("UNAUTHORIZED");
           }
+          if (meRes.ok) {
+            const profile = await meRes.json();
+            if (profile?.email && db.userEmail !== profile.email) {
+              db.userEmail = profile.email;
+              saveConfig({ userEmail: profile.email });
+              console.log(`[Collector] E-mail obtido via API: ${profile.email}`);
+            }
+          }
+        } catch (err) {
+          if (err.message === "UNAUTHORIZED") throw err;
+          console.warn("[Collector] Falha ao verificar /players/me:", err.message);
         }
-      } catch (err) {
-        if (err.message === "UNAUTHORIZED") throw err;
-        console.warn("[Collector] Falha ao verificar /players/me:", err.message);
       }
 
-      // 2. Estatísticas Globais (Overview)
-      const statsUrl = `https://account-backend.bhvr.com/player-stats/games/dbd/providers/${provider}?lang=en`;
-      try {
-        const statsRes = await fetchApi(statsUrl, token);
-        if (statsRes.status === 401) throw new Error("UNAUTHORIZED");
-        if (statsRes.ok) {
-          const statsPayload = await statsRes.json();
-          await processPayload(statsUrl, statsPayload);
-        }
-      } catch (err) {
-        if (err.message === "UNAUTHORIZED") throw err;
-        console.warn("[Collector] Falha ao buscar estatísticas gerais:", err.message);
-      }
+      // 2. Histórico de Partidas
+      // Na checagem periódica rápida: busca as 15 partidas mais recentes (payload ultraleve ~2KB)
+      // Em sync completo ou atualização manual: busca até 100 partidas
+      const historyLimit = needsFullSync ? 100 : 15;
+      const historyUrl = `https://account-backend.bhvr.com/player-stats/match-history/games/dbd/providers/${provider}?lang=en&limit=${historyLimit}`;
+      let hasNewMatches = false;
 
-      // 3. Estatísticas Regular Trials
-      const regularUrl = `https://account-backend.bhvr.com/player-stats/games/dbd/providers/${provider}?lang=en&matchCategory=Regular`;
-      try {
-        const regRes = await fetchApi(regularUrl, token);
-        if (regRes.status === 401) throw new Error("UNAUTHORIZED");
-        if (regRes.ok) {
-          const regPayload = await regRes.json();
-          await processPayload(regularUrl, regPayload);
-        }
-      } catch (err) {
-        if (err.message === "UNAUTHORIZED") throw err;
-        console.warn("[Collector] Falha ao buscar estatísticas de regular trials:", err.message);
-      }
-
-      // 4. Histórico de Partidas
-      const historyUrl = `https://account-backend.bhvr.com/player-stats/match-history/games/dbd/providers/${provider}?lang=en&limit=100`;
       try {
         const historyRes = await fetchApi(historyUrl, token);
         if (historyRes.status === 401) throw new Error("UNAUTHORIZED");
         if (historyRes.ok) {
           const historyPayload = await historyRes.json();
-          await processPayload(historyUrl, historyPayload);
+          const matches = findMatches(historyPayload);
+          if (matches.length) {
+            const ingestResult = await ingestMatches(db, matches);
+            if (ingestResult?.inserted > 0 || ingestResult?.updated > 0) {
+              hasNewMatches = true;
+              if (typeof onMatches === "function") {
+                await onMatches(matches);
+              }
+            }
+          }
+          await ingestSnapshots(db, [{
+            source_url: historyUrl,
+            kind: "match-history",
+            captured_at: new Date().toISOString(),
+            raw: historyPayload
+          }]);
         }
       } catch (err) {
         if (err.message === "UNAUTHORIZED") throw err;
         console.warn("[Collector] Falha ao buscar histórico de partidas:", err.message);
       }
 
+      // 3. Se houver partidas novas OU for sync completo: atualiza Overview e Regular Trials
+      if (hasNewMatches || needsFullSync) {
+        lastFullSyncAt = now;
+
+        // Overview
+        const statsUrl = `https://account-backend.bhvr.com/player-stats/games/dbd/providers/${provider}?lang=en`;
+        try {
+          const statsRes = await fetchApi(statsUrl, token);
+          if (statsRes.status === 401) throw new Error("UNAUTHORIZED");
+          if (statsRes.ok) {
+            const statsPayload = await statsRes.json();
+            await processPayload(statsUrl, statsPayload);
+          }
+        } catch (err) {
+          if (err.message === "UNAUTHORIZED") throw err;
+          console.warn("[Collector] Falha ao buscar estatísticas gerais:", err.message);
+        }
+
+        // Regular Trials
+        const regularUrl = `https://account-backend.bhvr.com/player-stats/games/dbd/providers/${provider}?lang=en&matchCategory=Regular`;
+        try {
+          const regRes = await fetchApi(regularUrl, token);
+          if (regRes.status === 401) throw new Error("UNAUTHORIZED");
+          if (regRes.ok) {
+            const regPayload = await regRes.json();
+            await processPayload(regularUrl, regPayload);
+          }
+        } catch (err) {
+          if (err.message === "UNAUTHORIZED") throw err;
+          console.warn("[Collector] Falha ao buscar estatísticas de regular trials:", err.message);
+        }
+      }
+
       lastRun = new Date().toISOString();
       loggedIn = true;
-      status("Dados atualizados via API.");
+      if (hasNewMatches) {
+        status("Nova partida detectada! Estatísticas atualizadas.");
+      } else {
+        status("Dados atualizados via API.");
+      }
     } catch (error) {
       if (error.message === "UNAUTHORIZED") {
         loggedIn = false;
@@ -610,7 +662,7 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
     }
     if (token) {
       status("Login concluído com sucesso!");
-      return collect();
+      return collect({ full: true, manual: true });
     } else {
       status("Login ainda não detectado. Por favor, conclua o login na janela.");
       return state;
@@ -636,9 +688,13 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
 
   function start() {
     clearInterval(timer);
+    const cfg = loadConfig();
+    const sec = Math.max(5, Math.min(300, Number(cfg.collectorIntervalSec) || 15));
+    pollIntervalMs = sec * 1000;
     backfillSnapshots();
-    collect();
-    timer = setInterval(collect, INTERVAL_MS);
+    collect({ full: true });
+    timer = setInterval(() => collect(), pollIntervalMs);
+    timer.unref?.();
   }
 
   function stop() {
@@ -655,6 +711,7 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
     start,
     stop,
     collect,
+    setIntervalSec,
     showLogin,
     finishLogin,
     clearLogin,
