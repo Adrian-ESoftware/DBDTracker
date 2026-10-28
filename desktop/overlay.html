@@ -767,6 +767,25 @@ h2:first-child{margin-top:2px}
 </div>
 
 <script>
+window.onerror = function(msg, url, line, col, error) {
+  console.error('[Overlay Error]', msg, error);
+  var errEl = document.getElementById('error');
+  if (errEl) {
+    errEl.style.display = 'block';
+    errEl.hidden = false;
+    errEl.textContent = 'Erro na interface: ' + msg + (line ? ' (linha ' + line + ')' : '');
+  }
+};
+window.onunhandledrejection = function(event) {
+  console.error('[Overlay Unhandled Rejection]', event.reason);
+  var errEl = document.getElementById('error');
+  if (errEl) {
+    errEl.style.display = 'block';
+    errEl.hidden = false;
+    errEl.textContent = 'Erro assíncrono: ' + (event.reason ? event.reason.message || event.reason : 'desconhecido');
+  }
+};
+
 var $ = function(id) { return document.getElementById(id); };
 var api = window.dbd.apiBase;
 var fmt = function(n) { return Number(n || 0).toLocaleString('pt-BR'); };
@@ -1897,8 +1916,12 @@ async function load() {
       filterMatchesByDate(true);
     }
 
+    $('error').style.display = 'none';
     $('error').hidden = true;
   } catch(e) {
+    console.error('[Overlay] Erro ao carregar dados:', e);
+    $('error').style.display = 'block';
+    $('error').hidden = false;
     $('error').textContent = 'Banco local indisponivel. Reinicie o app. (' + e.message + ')';
   }
 }
@@ -2304,6 +2327,17 @@ function linkCommunityEmailDirectly(email) {
   });
 }
 
+function linkCommunityEmail() {
+  if (communityOfficialEmail) {
+    linkCommunityEmailDirectly(communityOfficialEmail);
+  } else {
+    var digitado = window.prompt('Digite seu e-mail para vincular/recuperar suas partidas da nuvem:');
+    if (digitado && digitado.trim()) {
+      linkCommunityEmailDirectly(digitado.trim());
+    }
+  }
+}
+
 function restoreCommunityMatches() {
   var btn = $('btn-community-restore');
   if (!btn) return;
@@ -2399,7 +2433,7 @@ $('setting-community-opt-in').onchange = function() {
     updateCommunityStatus({ message: error.message });
   }.bind(this));
 };
-$('btn-community-backup').onclick = linkCommunityEmail;
+if ($('btn-community-backup')) $('btn-community-backup').onclick = linkCommunityEmail;
 $('matches-date-from').value = localStorage.getItem('matches-date-from') || '';
 $('matches-date-to').value = localStorage.getItem('matches-date-to') || '';
 if ($('matches-search')) {
