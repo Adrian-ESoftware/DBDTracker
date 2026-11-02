@@ -28,11 +28,16 @@ function resolveBaseUrl(url) {
   return base.replace(/\/+$/, "");
 }
 
+const SESSION_VERIFY_TTL_MS = 6 * 60 * 60 * 1000; // 6 horas de cache de validação de sessão
+const BACKUP_SUMMARY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos de cache para resumo de backup
+
 export class CommunityClient {
   constructor({ apiUrl, storage, fetchImpl = fetch }) {
     this.baseUrl = resolveBaseUrl(apiUrl);
     this.storage = storage;
     this.fetch = fetchImpl;
+    this._backupSummaryCache = null;
+    this._backupSummaryExpiry = 0;
   }
 
   getStoredSession() {
@@ -63,11 +68,17 @@ export class CommunityClient {
     return existing;
   }
 
-  async ensureSession() {
+  async ensureSession({ forceVerify = false } = {}) {
     if (!this.baseUrl) throw new Error("Community API is not configured");
 
     const existing = this.getStoredSession();
     if (existing?.token) {
+      const now = Date.now();
+      // Evita bater em POST /api/auth/session a cada sincronização se a sessão já foi validada recentemente
+      if (!forceVerify && existing.verified_at && now - existing.verified_at < SESSION_VERIFY_TTL_MS) {
+        return existing;
+      }
+
       try {
         const res = await this.fetch(`${this.baseUrl}/api/auth/session`, {
           method: "POST",
@@ -84,6 +95,7 @@ export class CommunityClient {
             user_id: data.user_id || existing.user_id,
             email: data.email ?? existing.email ?? null,
             email_confirmed: !!data.email_confirmed,
+            verified_at: now,
             user: {
               id: data.user_id || existing.user_id,
               email: data.email ?? existing.email ?? null,
@@ -121,6 +133,7 @@ export class CommunityClient {
       user_id: data.user_id,
       email: data.email ?? null,
       email_confirmed: !!data.email_confirmed,
+      verified_at: Date.now(),
       user: {
         id: data.user_id,
         email: data.email ?? null,
@@ -149,12 +162,15 @@ export class CommunityClient {
     }
     session.email = result.email || email;
     session.email_confirmed = !!result.email_confirmed;
+    session.verified_at = Date.now();
     if (session.user) {
       session.user.id = session.user_id;
       session.user.email = session.email;
       session.user.email_confirmed_at = session.email_confirmed ? new Date().toISOString() : null;
     }
     this.saveStoredSession(session);
+    this._backupSummaryCache = null;
+    this._backupSummaryExpiry = 0;
     return result;
   }
 
@@ -177,6 +193,7 @@ export class CommunityClient {
       user_id: data.user_id,
       email: data.email,
       email_confirmed: !!data.email_confirmed,
+      verified_at: Date.now(),
       user: {
         id: data.user_id,
         email: data.email,
@@ -184,13 +201,21 @@ export class CommunityClient {
       }
     };
     this.saveStoredSession(session);
+    this._backupSummaryCache = null;
+    this._backupSummaryExpiry = 0;
     return { ...data, session };
   }
 
-  async getCloudBackupSummary() {
+  async getCloudBackupSummary({ force = false } = {}) {
     if (!this.baseUrl) return null;
     const session = await this.getSession();
     if (!session?.token) return null;
+
+    const now = Date.now();
+    if (!force && this._backupSummaryCache && now < this._backupSummaryExpiry) {
+      return this._backupSummaryCache;
+    }
+
     const endpoint = `${this.baseUrl}/api/user/backup-summary`;
     try {
       const res = await this.fetch(endpoint, {
@@ -200,10 +225,13 @@ export class CommunityClient {
           "Content-Type": "application/json"
         }
       });
-      if (!res.ok) return null;
-      return await res.json();
+      if (!res.ok) return this._backupSummaryCache || null;
+      const summary = await res.json();
+      this._backupSummaryCache = summary;
+      this._backupSummaryExpiry = now + BACKUP_SUMMARY_CACHE_TTL_MS;
+      return summary;
     } catch {
-      return null;
+      return this._backupSummaryCache || null;
     }
   }
 
@@ -247,6 +275,11 @@ export class CommunityClient {
       offset += batch.length;
     }
 
+    // Marca todas as partidas baixadas da nuvem como já sincronizadas para não reenviá-las de volta ao D1!
+    if (allMatches.length > 0 && this.storage && session.token) {
+      markCommunityMatchesSynced(allMatches, session.token, this.storage);
+    }
+
     return { matches: allMatches, total };
   }
 
@@ -257,7 +290,7 @@ export class CommunityClient {
 
   async uploadMatches(matches, metadata = {}) {
     const session = await this.ensureSession();
-    return uploadAllCommunityMatches({
+    const res = await uploadAllCommunityMatches({
       apiUrl: `${this.baseUrl}/api/community-ingest`,
       accessToken: session.token,
       matches,
@@ -265,6 +298,11 @@ export class CommunityClient {
       storage: this.storage,
       fetchImpl: this.fetch
     });
+    if (res.uploaded > 0) {
+      this._backupSummaryCache = null;
+      this._backupSummaryExpiry = 0;
+    }
+    return res;
   }
 }
 
@@ -367,6 +405,50 @@ export function getCommunityMatchKey(match) {
   const characterId = cleanText(match?.character_id ?? match?.character) ?? "";
   const mapId = cleanText(match?.map_id ?? match?.map) ?? "";
   return `${officialId}|${playedAt}|${role}|${characterId}|${mapId}`;
+}
+
+function getSyncedStorageKey(accessToken) {
+  return `community_synced_keys_${createHash("sha256").update(accessToken).digest("hex").slice(0, 16)}`;
+}
+
+export function markCommunityMatchesSynced(matches, accessToken, storage) {
+  if (!Array.isArray(matches) || matches.length === 0 || !accessToken || !storage) return;
+  if (typeof storage.getItem !== "function" || typeof storage.setItem !== "function") return;
+  try {
+    const storageKey = getSyncedStorageKey(accessToken);
+    const syncedSet = new Set();
+    const raw = storage.getItem(storageKey);
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (Array.isArray(parsed)) {
+      for (const item of parsed) syncedSet.add(item);
+    }
+    for (const m of matches) {
+      if (m?.played_at && ["survivor", "killer"].includes(m.role)) {
+        syncedSet.add(getCommunityMatchKey(m));
+      }
+    }
+    storage.setItem(storageKey, JSON.stringify([...syncedSet]));
+  } catch {}
+}
+
+export function hasPendingCommunityMatches(matches, accessToken, storage) {
+  if (!Array.isArray(matches) || matches.length === 0) return false;
+  const validMatches = matches.filter(
+    m => m?.played_at && !Number.isNaN(Date.parse(m.played_at)) && ["survivor", "killer"].includes(m.role)
+  );
+  if (validMatches.length === 0) return false;
+  if (!accessToken || !storage || typeof storage.getItem !== "function") return true;
+
+  try {
+    const storageKey = getSyncedStorageKey(accessToken);
+    const raw = storage.getItem(storageKey);
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!Array.isArray(parsed) || parsed.length === 0) return true;
+    const syncedSet = new Set(parsed);
+    return validMatches.some(m => !syncedSet.has(getCommunityMatchKey(m)));
+  } catch {
+    return true;
+  }
 }
 
 export function createCommunitySubmission(matches, metadata = {}) {

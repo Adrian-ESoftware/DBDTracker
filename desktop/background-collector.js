@@ -309,7 +309,7 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
     if (matches.length) {
       const ingestResult = await ingestMatches(db, matches);
       if (typeof onMatches === "function" && (ingestResult?.inserted > 0 || ingestResult?.updated > 0)) {
-        await onMatches(matches);
+        await onMatches(ingestResult.changedMatches?.length ? ingestResult.changedMatches : matches);
       }
     }
     if (/\/player-stats\/games\/dbd\/providers\//i.test(url) && payload?.data) {
@@ -570,7 +570,7 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
             if (ingestResult?.inserted > 0 || ingestResult?.updated > 0) {
               hasNewMatches = true;
               if (typeof onMatches === "function") {
-                await onMatches(matches);
+                await onMatches(ingestResult.changedMatches?.length ? ingestResult.changedMatches : matches);
               }
             }
           }

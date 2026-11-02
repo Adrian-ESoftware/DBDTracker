@@ -2304,10 +2304,16 @@ function updateCommunityStatus(status) {
       }
     };
   }
-  refreshCloudBackupInfo();
+  if (!status.syncing) {
+    refreshCloudBackupInfo(false);
+  }
 }
 
-function refreshCloudBackupInfo() {
+var lastCloudBackupRefreshAt = 0;
+function refreshCloudBackupInfo(force) {
+  var now = Date.now();
+  if (!force && (now - lastCloudBackupRefreshAt < 60000)) return;
+  lastCloudBackupRefreshAt = now;
   if (window.dbd && window.dbd.getCloudBackupSummary) {
     window.dbd.getCloudBackupSummary().then(function(summary) {
       if (!summary) return;
@@ -2326,7 +2332,7 @@ function linkCommunityEmailDirectly(email) {
   updateCommunityStatus({ message: 'Vinculando e verificando histórico na nuvem...' });
   window.dbd.linkCommunityEmail(email).then(function(res) {
     updateCommunityStatus(res);
-    refreshCloudBackupInfo();
+    refreshCloudBackupInfo(true);
     if (res && res.recovered && res.total_matches > 0) {
       if (window.confirm('Foram encontradas ' + res.total_matches + ' partidas na nuvem para este e-mail! Deseja restaurar agora?')) {
         restoreCommunityMatches();
@@ -2362,7 +2368,7 @@ function restoreCommunityMatches() {
     } else {
       alert('Nenhuma partida nova para restaurar da nuvem.');
     }
-    refreshCloudBackupInfo();
+    refreshCloudBackupInfo(true);
   }).catch(function(err) {
     alert('Erro ao restaurar partidas: ' + err.message);
   }).finally(function() {
@@ -2378,7 +2384,7 @@ if (window.dbd && window.dbd.onRestoreProgress) {
   window.dbd.onRestoreProgress(function(info) {
     if (info && info.phase === 'completed') {
       load();
-      refreshCloudBackupInfo();
+      refreshCloudBackupInfo(true);
     }
   });
 }

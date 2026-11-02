@@ -806,92 +806,37 @@ where
 #[cfg(windows)]
 mod windows_listener {
     use super::Hotkey;
-    use std::ptr::null_mut;
-    use std::sync::Mutex;
-    use winapi::shared::minwindef::{LPARAM, LRESULT, WPARAM};
-    use winapi::shared::windef::HHOOK;
-    use winapi::um::winuser::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-        UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, VK_ESCAPE, VK_TAB,
-    };
+    use winapi::um::winuser::{GetAsyncKeyState, VK_ESCAPE, VK_TAB};
 
-    struct HookHandle(HHOOK);
-    unsafe impl Send for HookHandle {}
-
-    static HOOK: Mutex<Option<HookHandle>> = Mutex::new(None);
-    static CALLBACK: Mutex<Option<Box<dyn FnMut(Hotkey) + Send>>> = Mutex::new(None);
-
-    // Hook de baixo nível que apenas verifica se a tecla TAB ou ESC foi pressionada.
-    // NUNCA chama ToUnicode, ToUnicodeEx, ToAscii ou clear_keyboard_buffer, preservando
-    // 100% o estado de dead keys (acentos como ~, ´, `, ^) no teclado ABNT / ABNT2 no Windows.
-    unsafe extern "system" fn low_level_keyboard_proc(
-        code: i32,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> LRESULT {
-        if code >= 0 && wparam as u32 == WM_KEYDOWN {
-            let info = unsafe { *(lparam as *const KBDLLHOOKSTRUCT) };
-            let vk = info.vkCode as i32;
-            if vk == VK_TAB {
-                if let Ok(mut lock) = CALLBACK.lock() {
-                    if let Some(cb) = lock.as_mut() {
-                        cb(Hotkey::Tab);
-                    }
-                }
-            } else if vk == VK_ESCAPE {
-                if let Ok(mut lock) = CALLBACK.lock() {
-                    if let Some(cb) = lock.as_mut() {
-                        cb(Hotkey::Escape);
-                    }
-                }
-            }
-        }
-        let hook_handle = HOOK
-            .lock()
-            .ok()
-            .and_then(|h| h.as_ref().map(|hh| hh.0))
-            .unwrap_or(null_mut());
-        unsafe { CallNextHookEx(hook_handle, code, wparam, lparam) }
-    }
-
-    pub fn listen_hotkeys<F>(callback: F) -> Result<(), String>
+    // Polling seguro de teclas via GetAsyncKeyState.
+    // NUNCA instala hooks de sistema operacional (SetWindowsHookExW com WH_KEYBOARD_LL),
+    // o que previne 100% de falsos-positivos de antivírus (detecção de keylogger)
+    // e preserva completamente dead keys e acentuação no teclado ABNT/ABNT2.
+    pub fn listen_hotkeys<F>(mut callback: F) -> Result<(), String>
     where
         F: FnMut(Hotkey) + Send + 'static,
     {
-        *CALLBACK.lock().map_err(|e| e.to_string())? = Some(Box::new(callback));
-        let hook = unsafe {
-            SetWindowsHookExW(
-                WH_KEYBOARD_LL,
-                Some(low_level_keyboard_proc),
-                null_mut(),
-                0,
-            )
-        };
-        if hook.is_null() {
-            let err = unsafe { winapi::um::errhandlingapi::GetLastError() };
-            return Err(format!("SetWindowsHookExW falhou com erro {err}"));
-        }
-        *HOOK.lock().map_err(|e| e.to_string())? = Some(HookHandle(hook));
+        let mut tab_was_down = false;
+        let mut esc_was_down = false;
 
-        let mut msg: MSG = unsafe { std::mem::zeroed() };
-        while unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } > 0 {
+        loop {
             unsafe {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        }
-
-        if let Ok(mut lock) = HOOK.lock() {
-            if let Some(h) = lock.take() {
-                unsafe {
-                    UnhookWindowsHookEx(h.0);
+                let tab_state = GetAsyncKeyState(VK_TAB);
+                let tab_is_down = (tab_state as u16 & 0x8000) != 0;
+                if tab_is_down && !tab_was_down {
+                    callback(Hotkey::Tab);
                 }
+                tab_was_down = tab_is_down;
+
+                let esc_state = GetAsyncKeyState(VK_ESCAPE);
+                let esc_is_down = (esc_state as u16 & 0x8000) != 0;
+                if esc_is_down && !esc_was_down {
+                    callback(Hotkey::Escape);
+                }
+                esc_was_down = esc_is_down;
             }
+            std::thread::sleep(std::time::Duration::from_millis(25));
         }
-        if let Ok(mut lock) = CALLBACK.lock() {
-            *lock = None;
-        }
-        Ok(())
     }
 }
 

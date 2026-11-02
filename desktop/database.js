@@ -300,12 +300,13 @@ export async function ingestMatches(db, matches) {
       (match_id,character,role,result,score,perks_json,item,addons_json,offering) VALUES (?,?,?,?,?,?,?,?,?)`);
     const remove = ["loadouts", "killer_info", "participants"].map(table => db.db.prepare(`DELETE FROM ${table} WHERE match_id=?`));
     let inserted = 0, updated = 0;
+    const changedMatches = [];
     db.db.exec("BEGIN");
     try {
       for (const match of matches) {
         if (!match.played_at || !match.role) continue;
 
-        const existing = db.db.prepare("SELECT id, map, duration_sec, score FROM matches WHERE played_at = ? AND role = ? AND (user_email = ? OR (? IS NULL AND user_email IS NULL))").get(match.played_at, match.role, userEmail, userEmail);
+        const existing = db.db.prepare("SELECT id, source_id, character, map, map_realm, duration_sec, result, score, raw_json FROM matches WHERE played_at = ? AND role = ? AND (user_email = ? OR (? IS NULL AND user_email IS NULL))").get(match.played_at, match.role, userEmail, userEmail);
 
         let id;
         if (existing) {
@@ -317,11 +318,30 @@ export async function ingestMatches(db, matches) {
           if (!isMoreOrEquallyComplete(match, existing)) {
             continue;
           }
+
+          const incomingPartCount = Array.isArray(match.participants) ? match.participants.length : 0;
+          const incomingHasKiller = match.killer_info ? 1 : 0;
+          const isIdentical =
+            (match.map ?? null) === (existing.map ?? null) &&
+            (match.duration_sec ?? null) === (existing.duration_sec ?? null) &&
+            (match.score ?? null) === (existing.score ?? null) &&
+            (match.character ?? null) === (existing.character ?? null) &&
+            (match.result ?? null) === (existing.result ?? null) &&
+            incomingPartCount === pCount &&
+            incomingHasKiller === hasKiller &&
+            (!match.raw || existing.raw_json !== null);
+
+          if (isIdentical) {
+            continue;
+          }
+
           id = existing.id;
           updated++;
+          changedMatches.push(match);
         } else {
           id = idFor(match, userEmail);
           inserted++;
+          changedMatches.push(match);
         }
 
         upsert.run(id, match.source_id ?? null, match.played_at, match.role, match.character ?? null, match.map ?? null,
@@ -341,7 +361,7 @@ export async function ingestMatches(db, matches) {
       db.db.exec("ROLLBACK");
       throw error;
     }
-  return { received: matches.length, inserted, updated };
+  return { received: matches.length, inserted, updated, changedMatches };
 }
 
 export async function ingestSnapshots(db, snapshots) {

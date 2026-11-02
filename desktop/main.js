@@ -14,7 +14,7 @@ import { app, BrowserWindow, globalShortcut, ipcMain, dialog, Tray, Menu, native
 import { openDatabase, allSavedMatches, ingestMatches } from "./database.js";
 import { startServer } from "./server.js";
 import { createBackgroundCollector } from "./background-collector.js";
-import { createCommunityAuth, ensureAnonymousCommunitySession, linkRecoveryEmailDirect, uploadAllCommunityMatches } from "./community.js";
+import { createCommunityAuth, ensureAnonymousCommunitySession, linkRecoveryEmailDirect, uploadAllCommunityMatches, hasPendingCommunityMatches } from "./community.js";
 import { createAutoUpdater } from "./updater.js";
 import { createWikiCatalog } from "./wiki-catalog.js";
 
@@ -673,6 +673,16 @@ async function syncAllMatchesToCommunity(db, extraMatches = []) {
     }
 
     if (!matchesToSync || matchesToSync.length === 0) return communityState;
+
+    // Verifica localmente se há partidas inéditas antes de disparar IPC ou rede
+    const existingSession = await communityAuth.getSession();
+    if (existingSession?.token && !hasPendingCommunityMatches(matchesToSync, existingSession.token, communityStorage)) {
+      if (localCount > 0 && userConfig.lastSyncedMatchCount !== localCount) {
+        userConfig.lastSyncedMatchCount = localCount;
+        saveUserConfig();
+      }
+      return communityState;
+    }
 
     communityState.syncing = true;
     communityState.message = `Sincronizando ${matchesToSync.length} partida(s)...`;

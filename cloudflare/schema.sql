@@ -1,4 +1,4 @@
--- Cloudflare D1 schema for DBD Tracker Community
+-- Cloudflare D1 schema for DBD Tracker Community (Optimized for Low Read/Write Quota)
 -- Execute with: npx wrangler d1 execute dbd-tracker-community --file=schema.sql
 
 CREATE TABLE IF NOT EXISTS community_accounts (
@@ -8,19 +8,20 @@ CREATE TABLE IF NOT EXISTS community_accounts (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_accounts_token_hash ON community_accounts(token_hash);
+DROP INDEX IF EXISTS idx_accounts_token_hash;
+CREATE INDEX IF NOT EXISTS idx_accounts_email_lower ON community_accounts(LOWER(email));
 
 CREATE TABLE IF NOT EXISTS community_submissions (
   id TEXT PRIMARY KEY,
   owner_id TEXT NOT NULL REFERENCES community_accounts(id) ON DELETE CASCADE,
   payload_hash TEXT NOT NULL,
   match_count INTEGER NOT NULL,
-  payload_json TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'accepted',
   received_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (owner_id, payload_hash)
 );
-CREATE INDEX IF NOT EXISTS idx_submissions_owner_hash ON community_submissions(owner_id, payload_hash);
+DROP INDEX IF EXISTS idx_submissions_owner_hash;
 
 CREATE TABLE IF NOT EXISTS community_matches (
   id TEXT PRIMARY KEY,
@@ -40,12 +41,16 @@ CREATE TABLE IF NOT EXISTS community_matches (
   platform TEXT,
   region TEXT,
   source TEXT NOT NULL DEFAULT 'official_stats',
+  loadout_json TEXT NOT NULL DEFAULT '{}',
+  participants_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (owner_id, match_hash)
 );
-CREATE INDEX IF NOT EXISTS idx_comm_matches_played ON community_matches(played_at DESC);
-CREATE INDEX IF NOT EXISTS idx_comm_matches_query ON community_matches(patch_version, role, character_id, map_id);
+DROP INDEX IF EXISTS idx_comm_matches_played;
+DROP INDEX IF EXISTS idx_comm_matches_query;
+CREATE INDEX IF NOT EXISTS idx_comm_matches_owner_played ON community_matches(owner_id, played_at DESC);
 
+-- Legacy tables kept for backward compatibility with older records
 CREATE TABLE IF NOT EXISTS community_match_loadouts (
   match_id TEXT PRIMARY KEY REFERENCES community_matches(id) ON DELETE CASCADE,
   perks_json TEXT NOT NULL DEFAULT '[]',
@@ -65,7 +70,14 @@ CREATE TABLE IF NOT EXISTS community_match_participants (
   UNIQUE (match_id, character_id, role)
 );
 
--- Consolidated public statistics tables (Read by Overlay UI)
+-- Key-Value metadata & pre-serialized snapshots (1-row reads for stats and user summaries)
+CREATE TABLE IF NOT EXISTS community_meta (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- Consolidated public statistics tables (Updated incrementally on ingest)
 CREATE TABLE IF NOT EXISTS public_character_stats (
   patch_version TEXT NOT NULL,
   role TEXT NOT NULL,

@@ -168,4 +168,34 @@ test("topCharacters deriva os destaques das partidas quando top_character_stats 
   assert.equal(kil.values["Kill Rate"], "100%");
 });
 
+test("ingestMatches ignora partidas idênticas já salvas sem marcar updated", async () => {
+  const db = openDatabase(":memory:");
+  const sample = [{
+    source_id: "official-123",
+    played_at: "2026-06-08T10:00:00Z",
+    role: "survivor",
+    character: "Nea",
+    map: "Blood Lodge",
+    duration_sec: 600,
+    result: "ESCAPED",
+    score: 25000,
+    loadout: { perks: ["Lithe"] },
+    killer_info: { killer: "The Trapper", kills_count: 2 },
+    participants: [
+      { character: "The Trapper", role: "killer", result: "2K" },
+      { character: "Nea", role: "survivor", result: "ESCAPED" }
+    ]
+  }];
+
+  const r1 = await ingestMatches(db, sample);
+  assert.equal(r1.inserted, 1);
+  assert.equal(r1.updated, 0);
+  assert.equal(r1.changedMatches.length, 1);
+
+  const r2 = await ingestMatches(db, sample);
+  assert.equal(r2.inserted, 0);
+  assert.equal(r2.updated, 0);
+  assert.equal(r2.changedMatches.length, 0);
+});
+
 

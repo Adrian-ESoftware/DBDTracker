@@ -121,7 +121,7 @@ jobs:
           if-no-files-found: warn
 
   build-windows:
-    name: Build Windows (.exe Portable)
+    name: Build Windows (Instalador NSIS e Portable)
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: windows-latest
@@ -152,7 +152,7 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Empacotar executável único Windows
+      - name: Empacotar executáveis Windows (Instalador NSIS e Portátil)
         working-directory: desktop
         run: npm run dist:win
         env:

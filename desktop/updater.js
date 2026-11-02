@@ -25,13 +25,24 @@ export function compareVersions(v1, v2) {
   return 0;
 }
 
-export function selectReleaseAsset(assets = [], platform = process.platform) {
+export function selectReleaseAsset(assets = [], platform = process.platform, env = process.env) {
   if (!Array.isArray(assets) || assets.length === 0) return null;
 
   if (platform === "win32") {
     const exeAssets = assets.filter(
       a => a && typeof a.name === "string" && a.name.toLowerCase().endsWith(".exe") && !a.name.toLowerCase().endsWith(".blockmap")
     );
+    if (exeAssets.length === 0) return null;
+
+    const isPortable = Boolean(env?.PORTABLE_EXECUTABLE_FILE);
+    if (isPortable) {
+      const portable = exeAssets.find(a => /portable/i.test(a.name));
+      if (portable) return portable;
+    } else {
+      const setup = exeAssets.find(a => /setup/i.test(a.name));
+      if (setup) return setup;
+    }
+
     return (
       exeAssets.find(a => a.name.toLowerCase().includes("dbd-tracker-overlay")) ||
       exeAssets[0] ||
@@ -343,7 +354,7 @@ export function createAutoUpdater({
           });
         }
 
-        const asset = selectReleaseAsset(release.assets || [], platform);
+        const asset = selectReleaseAsset(release.assets || [], platform, env);
         if (!asset || !asset.browser_download_url) {
           return emit({
             status: "available",
@@ -394,6 +405,27 @@ export function createAutoUpdater({
     mkdirSync(updatesDir, { recursive: true });
 
     if (platform === "win32") {
+      const isSetupInstaller = /setup/i.test(state.downloadedFilePath);
+      if (isSetupInstaller) {
+        // Instalador NSIS: executa diretamente sem script intermediário VBS/CMD
+        // Com /S para instalação silenciosa e sem exigir elevação UAC
+        let child;
+        try {
+          child = spawnImpl(state.downloadedFilePath, ["/S"], {
+            detached: true,
+            stdio: "ignore"
+          });
+        } catch {
+          child = spawnImpl(state.downloadedFilePath, [], {
+            detached: true,
+            stdio: "ignore"
+          });
+        }
+        child.unref?.();
+        updateApplied = true;
+        return true;
+      }
+
       const vbsPath = join(updatesDir, "apply-update.vbs");
       const cmdPath = join(updatesDir, "apply-update.cmd");
       const vbsContent = buildWindowsVbsScript(state.downloadedFilePath, targetExePath, relaunch);

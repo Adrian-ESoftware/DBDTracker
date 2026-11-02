@@ -452,3 +452,82 @@ test("uploadAllCommunityMatches interrompe imediatamente sem recursão em caso d
   // Deve ter feito exatamente 1 requisição, sem se dividir recursivamente
   assert.equal(requestsMade, 1);
 });
+
+test("ensureSession reutiliza sessão validada recentemente e restoreUserMatches marca partidas como sincronizadas", async () => {
+  const { hasPendingCommunityMatches } = await import("./community.js");
+  const store = {};
+  const mockStorage = {
+    getItem: k => store[k] ?? null,
+    setItem: (k, v) => { store[k] = v; },
+    removeItem: k => { delete store[k]; }
+  };
+
+  let sessionCalls = 0;
+  let backupCalls = 0;
+
+  const mockFetch = async (url) => {
+    if (url.endsWith("/api/auth/session")) {
+      sessionCalls++;
+      return {
+        ok: true,
+        json: async () => ({
+          token: "dbd_cached_session_tok",
+          user_id: "u_1",
+          email: "user@test.com",
+          email_confirmed: true
+        })
+      };
+    }
+    if (url.includes("/api/user/matches")) {
+      return {
+        ok: true,
+        json: async () => ({
+          matches: [
+            {
+              id: "m1",
+              source_id: "official-777",
+              played_at: "2026-10-01T12:00:00.000Z",
+              role: "survivor",
+              character: "Meg Thomas",
+              map: "Coal Tower"
+            }
+          ],
+          total: 1,
+          offset: 0,
+          limit: 500,
+          has_more: false
+        })
+      };
+    }
+    if (url.endsWith("/api/user/backup-summary")) {
+      backupCalls++;
+      return {
+        ok: true,
+        json: async () => ({ total_matches: 1, last_match_at: "2026-10-01T12:00:00.000Z" })
+      };
+    }
+    return { ok: false, status: 404 };
+  };
+
+  const client = createCommunityAuth({
+    apiUrl: "https://dbd-community.example.workers.dev",
+    storage: mockStorage,
+    fetchImpl: mockFetch
+  });
+
+  await client.ensureSession();
+  await client.ensureSession();
+  assert.equal(sessionCalls, 1, "não deve chamar /api/auth/session repetidamente dentro do TTL");
+
+  const restored = await client.restoreUserMatches();
+  assert.equal(restored.matches.length, 1);
+  assert.equal(
+    hasPendingCommunityMatches(restored.matches, "dbd_cached_session_tok", mockStorage),
+    false,
+    "partidas restauradas da nuvem já devem constar como sincronizadas localmente"
+  );
+
+  await client.getCloudBackupSummary();
+  await client.getCloudBackupSummary();
+  assert.equal(backupCalls, 1, "getCloudBackupSummary deve usar cache em memória");
+});
