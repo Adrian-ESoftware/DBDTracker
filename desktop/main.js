@@ -33,32 +33,13 @@ function loadCommunityConfig() {
 
 const communityConfig = loadCommunityConfig();
 
-// ── Otimizações de memória e plataforma ──
-if (process.platform === "win32") {
-  app.disableHardwareAcceleration();
-  app.commandLine.appendSwitch("disable-gpu");
-  app.commandLine.appendSwitch("disable-gpu-compositing");
-  app.commandLine.appendSwitch("disable-software-rasterizer");
-  app.commandLine.appendSwitch("wm-window-animations-disabled");
-}
-app.commandLine.appendSwitch("js-flags", "--max-old-space-size=96");
-app.commandLine.appendSwitch("disable-site-isolation-trials");
-app.commandLine.appendSwitch("disable-features", "SpareRendererForSitePerProcess,TranslateUI,BlinkGenPropertyTrees,BackForwardCache");
-// Reduz processos auxiliares e networking em background
-app.commandLine.appendSwitch("renderer-process-limit", "1");
-app.commandLine.appendSwitch("disable-background-networking");
-app.commandLine.appendSwitch("disable-component-update");
+// ── Configurações de plataforma e navegador ──
 app.commandLine.appendSwitch("disable-sync");
 app.commandLine.appendSwitch("disable-translate");
 app.commandLine.appendSwitch("disable-extensions");
 app.commandLine.appendSwitch("disable-default-apps");
 app.commandLine.appendSwitch("no-first-run");
-app.commandLine.appendSwitch("disable-breakpad");
 app.commandLine.appendSwitch("disable-domain-reliability");
-try {
-  app.commandLine.appendSwitch("disk-cache-dir", join(app.getPath("userData"), "cache"));
-  app.commandLine.appendSwitch("gpu-disk-cache-dir", join(app.getPath("userData"), "gpu-cache"));
-} catch {}
 
 // Garante instancia unica: se ja existe uma rodando, foca ela e encerra esta
 const gotLock = app.requestSingleInstanceLock();

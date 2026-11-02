@@ -352,6 +352,8 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
     return null;
   }
 
+  const CHROME_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
   function ensureBrowser(show = false) {
     if (browser && !browser.isDestroyed()) {
       if (show && !browser.isVisible()) {
@@ -366,13 +368,38 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
       height: 820,
       show,
       title: "DBD Tracker - Login oficial",
+      backgroundColor: "#0b0e14",
+      autoHideMenuBar: true,
       webPreferences: {
         partition: "persist:dbd-official",
         contextIsolation: true,
-        spellcheck: false,
-        enableWebSQL: false
+        spellcheck: false
       }
     });
+
+    if (browser.webContents) {
+      browser.webContents.setUserAgent(CHROME_USER_AGENT);
+
+      // Permite que popups de login de provedores (Steam, Xbox, PlayStation, Epic) abram normalmente
+      browser.webContents.setWindowOpenHandler(() => ({
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          width: 960,
+          height: 720,
+          backgroundColor: "#0b0e14",
+          autoHideMenuBar: true,
+          webPreferences: {
+            partition: "persist:dbd-official",
+            contextIsolation: true
+          }
+        }
+      }));
+
+      browser.webContents.on("did-fail-load", (event, errorCode, errorDescription, validatedURL) => {
+        if (errorCode === -3) return; // ERR_ABORTED (redirecionamentos comuns)
+        console.warn(`[Collector] Falha ao carregar (${errorCode}): ${errorDescription} - ${validatedURL}`);
+      });
+    }
 
     const loginWindow = browser;
     loginWindow.on("close", () => {
@@ -645,9 +672,20 @@ export function createBackgroundCollector(db, onStatus, onMatches) {
 
   async function showLogin() {
     stopLoginWatcher();
+    if (browser && !browser.isDestroyed() && !browser.isVisible()) {
+      browser.destroy();
+      browser = null;
+    }
     const win = ensureBrowser(true);
-    await win.loadURL("https://stats.deadbydaylight.com/");
-    status("Faca login na janela oficial e o token sera capturado automaticamente.");
+    win.show();
+    win.focus();
+    status("Carregando página oficial de login...");
+    try {
+      await win.loadURL("https://stats.deadbydaylight.com/");
+    } catch (err) {
+      console.warn("[Collector] Aviso ao carregar login:", err.message);
+    }
+    status("Faça login na janela oficial e o token será capturado automaticamente.");
     startLoginWatcher(win);
   }
 
