@@ -1,6 +1,6 @@
 {
   "name": "dbd-tracker-overlay",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "DBD Tracker Overlay - Estatisticas e HUD em tempo real para Dead by Daylight",
   "author": "Adrian Software",
   "private": true,
